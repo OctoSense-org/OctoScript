@@ -2,6 +2,8 @@
 
 [English](README.md) | 简体中文
 
+> **要开发 OctoSense 应用？** 你不需要这个仓库：它是独立的 OctoScript 语言运行时（VM、能力、工作流、LSP）。应用的 `main.splash` 运行在应用工具为你准备好的 Makepad 运行时上，应用可用的语言与 API 见 [SCRIPT-API](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/docs/SCRIPT-API.md)。请按 [OctoSense 组织主页](https://github.com/OctoSense-org)给出的顺序阅读：[OctoScript-App-Design-Flow `AGENTS.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/AGENTS.md) → [`flows/README.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/flows/README.md) → [`docs/QUICKSTART.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/docs/QUICKSTART.md)。
+
 Octoscript 是一个以能力（capability）为先的脚本运行时，面向动态工作流、工具编排和数据转换。它以 Makepad Octoscript VM 为起点，把 UI 支持作为可选项，而不是让 UI 成为语言的边界。
 
 ## 当前基线
