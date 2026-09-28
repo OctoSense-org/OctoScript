@@ -5,7 +5,7 @@ parser, derive crate, and their leaf dependencies come from the `octoscript`
 branch of the OctoSense fork of Makepad, consumed as a pinned git dependency:
 
 ```toml
-makepad-script = { git = "https://github.com/OctoSense-org/makepad.git", rev = "975c5630e01b0f3f3ae16cafd2e0fce3c9a5f7d9" }
+makepad-script = { git = "https://github.com/OctoSense-org/makepad.git", rev = "b0cbc9bcfb204ade5d8ceecb66e0a58e972c70f1" }
 ```
 
 The pin appears in exactly two manifests, `crates/octoscript-core/Cargo.toml`
