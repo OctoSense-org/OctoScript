@@ -545,6 +545,28 @@ answers = ["status", "message", "count"]
 args = ["id", "fields"]
 answers = ["title", "subtitle", "summary", "coverage", "status", "as_of", "metric1_label", "metric1_value", "metric2_label", "metric2_value", "pick1_title", "pick1_body", "pick1_source", "url1", "pick2_title", "pick2_body", "pick2_source", "url2", "pick3_title", "pick3_body", "pick3_source", "url3", "evidence_title", "evidence_body"]
 
+[sources."sys.digest"]
+# A digest the HOST holds for the card's own app: the findings of one agent run
+# (a workflow template's result), with the sources it read. The card states
+# nothing of its own; every sentence and every link is in the digest.
+#
+# `app` is a literal app id and must be the app that published the card. Only
+# the host knows the publisher, so the host refuses any other and a card can
+# never read another app's digests. `id` names one stored run: a literal
+# (checked against `[A-Za-z0-9_-]{1,64}`) or a path into state.
+#
+# One shape whatever template produced the run. `status` is `ready`,
+# `partial`, `failed`, `missing` or `expired`; a missing or expired digest is an
+# empty record with `$state` `.failed`, never an error. `points` rows are
+# `{id, text, label, cite, citations}`: `citations` index into `sources`, and
+# `cite` is the same as 1-based text ("1, 3") for a card to show. `sources` rows
+# are `{id, n, title, source, url, published_at}`. Model text carries no URLs;
+# a link comes only from `sources[].url`. Host-answered only: no backend call.
+args = ["app", "id", "fields"]
+# The row fields are pooled with the record's, as `sys.weather`'s days are: a
+# loop over `d.points` reads only what `fields:` asked for.
+answers = ["status", "topic", "language", "summary", "retrieved_at", "count", "points", "sources", "id", "text", "label", "cite", "citations", "n", "title", "source", "url", "published_at"]
+
 [sources."sys.movers"]
 # `symbols` names the universe to rank; omitted means the whole market. Without
 # it a themed request ("top AI movers") could only render market-wide gainers

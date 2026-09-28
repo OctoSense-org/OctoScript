@@ -7088,8 +7088,32 @@ fn every_offered_field_has_a_translation() {
         ("sys.weather", "days"),
     ];
 
+    // Capabilities only the HOST answers (§5.11), by design: the source plan's
+    // data blob is their one route, and a backend call is refused rather than
+    // missing. `sys.digest` reads a file the host holds for the PUBLISHING app,
+    // and no call made from the card could check which app that is. Checked
+    // below to have no translation at all, so the list cannot hide a gap.
+    const HOST_ONLY: &[&str] = &["sys.digest"];
+
     let mut missing: Vec<(String, String)> = Vec::new();
     for (capability, fields) in catalog::ANSWERS {
+        if HOST_ONLY.contains(capability) {
+            for field in *fields {
+                for f in [field.to_string(), format!("0.{field}")] {
+                    let binding = octoscript_ui_l0::SourceBinding {
+                        helper: (*capability).to_string(),
+                        args: vec![("app".into(), "os.news".into()), ("id".into(), "r1".into())],
+                        nested: Vec::new(),
+                        field: f,
+                    };
+                    assert!(
+                        octoscript_ui_l0::makepad::vm_call(&binding).is_none(),
+                        "{capability} is host-answered only, yet lowers {field:?} to a call"
+                    );
+                }
+            }
+            continue;
+        }
         for field in *fields {
             // A collection is addressed by row; ask for row 0.
             let answered = [field.to_string(), format!("0.{field}")].iter().any(|f| {

@@ -1,0 +1,37 @@
+# ledger news.glance-digest@1.0.0
+# level:   L0
+# profile: ui/l0
+#
+# A glance card bound to a digest the host holds for its own app. The card
+# carries no text of its own beyond vocabulary: the summary, the points and
+# every source come from `sys.digest`.
+
+source brief sys.digest(app: "os.news", id: "morning", fields: [topic, summary, points, sources,
+                                                         id, text, cite, n, title, source])
+
+copy label   { class: vocabulary, en: "NEWS DIGEST", zh: "新闻摘要" }
+copy missing { class: vocabulary, en: "No digest yet", zh: "暂无摘要" }
+
+view root  Surface(pad: .page) {
+             Col(gap: 6) {
+               Row(gap: 8) {
+                 TextCaption(text: copy.label, width: .fill)
+                 TextCaption(text: brief.topic)
+               }
+               when brief.$state == .failed { TextBody(text: copy.missing) }
+               TextBody(text: brief.summary, width: .fill)
+               for p in brief.points key p.id {
+                 Row(gap: 8) {
+                   TextRow(text: p.text, width: .fill)
+                   TextCaption(text: p.cite)
+                 }
+               }
+               for s in brief.sources key s.id {
+                 Row(gap: 8) {
+                   TextCaption(text: s.n)
+                   TextCaption(text: s.source)
+                   TextCaption(text: s.title, width: .fill)
+                 }
+               }
+             }
+           }

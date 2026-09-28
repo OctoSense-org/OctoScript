@@ -1224,6 +1224,53 @@ second state and an event that writes it. `initial:` still admits no expression,
 or at L1: `initial: here.lat * 2` is refused, because the L1 grammar admits arithmetic
 in an argument value and this is a declaration.
 
+### 5.14 A digest the host holds: `sys.digest`
+
+An app's agent reads the news, a topic or a market and writes down what it found. A card that
+shows those findings must not carry them as text of its own — that would be the card stating
+facts, which §4 forbids — so the findings become a **source the host resolves**, with the
+provenance beside them:
+
+```
+source brief sys.digest(app: "os.news", id: "morning",
+                        fields: [topic, summary, points, sources, id, text, cite, n, title, source])
+```
+
+**Whose digest.** `app` is a literal app id and must be the app that published the card. Only
+the host knows the publisher — it is the caller, never an argument — so the host refuses a card
+naming any other app, and a card can read only its own app's digests. A card cannot compute
+`app` from state or another source; the checker refuses anything but a literal. `id` names one
+stored digest: a literal checked against `[A-Za-z0-9_-]{1,64}` (the run-id charset, so an id can
+never be a path) or a path into state.
+
+**One shape, whatever produced it.** Every digest answers the same record, independent of the
+workflow template that made it:
+
+| Field | Value |
+|---|---|
+| `status` | `ready`, `partial`, `failed`, `missing` or `expired` |
+| `topic`, `language` | what was researched, and in which language the text is |
+| `summary` | the model's summary; no URLs |
+| `retrieved_at` | when the host fetched the newest source (RFC 3339) |
+| `count` | the number of points |
+| `points` | rows `{id, text, label, cite, citations}`: `citations` index `sources`, `cite` is the same as 1-based text (`"1, 3"`) |
+| `sources` | rows `{id, n, title, source, url, published_at}`: `n` is the 1-based number `cite` refers to |
+
+The row fields are pooled with the record's in `fields:`, as a forecast's days are.
+
+**Links come only from `sources`.** Model text — `summary`, a point's `text` or `label` —
+carries no URL; the workflow refuses one and the host checks again. A card that offers a link
+binds `s.url` from a source row, which the host retrieved itself.
+
+**Absence is a state, not an error.** A digest that does not exist, has expired or failed to
+parse resolves to an empty record (`status` says which) with `$state` `.failed`, so the card
+renders its own "nothing yet" vocabulary (§5.9). It never fails the card.
+
+**Host-answered only** (§5.11). No backend lowering exists: a call made from the card's
+isolate could not check `app` against the publisher. The digest is read-only; it is not in
+§5.12's writable set. Retention, expiry and size caps are the host's and are documented with
+its resolver (OctoSense's glance service).
+
 ---
 
 ## 6. What makes L0 terminate
