@@ -13,7 +13,7 @@ workspace = true
 blake3 = { version = "1.8.5", features = ["pure"] }
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native"], optional = true }
-makepad-script = { git = "https://github.com/OctoSense-org/makepad.git", rev = "4fdcfccc127b700f1fc01aa1a5488af938dd7f3d" }
+makepad-script = { git = "https://github.com/OctoSense-org/makepad.git", rev = "bf318136a375c4d1fb7ee10e13e27336b6d98744" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.150"
 octoscript-core = { path = "../octoscript-core" }
