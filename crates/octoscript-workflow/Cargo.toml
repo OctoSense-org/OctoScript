@@ -14,14 +14,19 @@ blake3 = { version = "1.8.5", features = ["pure"] }
 getrandom = { version = "0.3.4", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-octoscript-capabilities = { path = "../octoscript-capabilities" }
+octoscript-capabilities = { path = "../octoscript-capabilities", default-features = false }
 octoscript-core = { path = "../octoscript-core" }
 octoscript-protocol = { version = "0.1.0", path = "../octoscript-protocol" }
 octoscript-sandbox = { version = "0.1.0", path = "../octoscript-sandbox", optional = true }
-octoscript-schema = { version = "0.1.0", path = "../octoscript-schema" }
+octoscript-schema = { version = "0.1.0", path = "../octoscript-schema", default-features = false }
 octoscript-storage = { version = "0.1.0", path = "../octoscript-storage" }
 
 [features]
+# Opt-in exact schema number bounds; see octoscript-schema/exact-numbers.
+exact-numbers = [
+    "octoscript-capabilities/exact-numbers",
+    "octoscript-schema/exact-numbers",
+]
 http-endpoint-catalog = ["octoscript-capabilities/http-endpoint-catalog"]
 platform-keyring-secret-resolver = [
     "http-endpoint-catalog",

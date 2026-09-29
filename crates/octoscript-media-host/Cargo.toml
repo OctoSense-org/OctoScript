@@ -14,7 +14,8 @@ name = "octoscript-media-host"
 path = "src/main.rs"
 
 [dependencies]
-octoscript-capabilities = { path = "../octoscript-capabilities", features = ["http-endpoint-catalog"] }
+# Leaf binary: keeps exact schema number bounds (serde_json arbitrary_precision).
+octoscript-capabilities = { path = "../octoscript-capabilities", features = ["exact-numbers", "http-endpoint-catalog"] }
 octoscript-core = { path = "../octoscript-core" }
-octoscript-workflow = { version = "0.1.0", path = "../octoscript-workflow", features = ["http-endpoint-catalog"] }
+octoscript-workflow = { version = "0.1.0", path = "../octoscript-workflow", features = ["exact-numbers", "http-endpoint-catalog"] }
 serde_json = "1.0.150"

@@ -734,6 +734,9 @@ both keys with JSON `null`. See [editor workflow-data projection](docs/workflow-
   fixed-file and feature-gated HTTP endpoint/origin catalogs, aggregate catalog
   limits, safe host bridge, and a sealed static-catalog mobile/embedded profile.
 - `octoscript-schema`: bounded executable JSON-schema subset for tool contracts.
+  Exact number bounds beyond `i64`/`u64`/`f64` precision are the opt-in
+  `exact-numbers` feature (serde_json `arbitrary_precision`), off in libraries
+  and on in the `octoscript` CLI; see [numeric precision](docs/schema-contracts.md#numeric-precision).
 - `octoscript-storage`: host-only authenticated records, rollback protection, and
   fenced compare-and-swap backend boundary, plus an optional anchored SQLite
   payload adapter that requires a platform trust anchor and a bounded

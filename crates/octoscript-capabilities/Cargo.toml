@@ -19,13 +19,15 @@ serde_json = "1.0.150"
 octoscript-core = { path = "../octoscript-core" }
 octoscript-protocol = { version = "0.1.0", path = "../octoscript-protocol" }
 octoscript-sandbox = { version = "0.1.0", path = "../octoscript-sandbox", optional = true }
-octoscript-schema = { version = "0.1.0", path = "../octoscript-schema" }
+octoscript-schema = { version = "0.1.0", path = "../octoscript-schema", default-features = false }
 octoscript-storage = { version = "0.1.0", path = "../octoscript-storage", optional = true }
 octoscript-worker = { version = "0.1.0", path = "../octoscript-worker", optional = true }
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"], optional = true }
 zeroize = { version = "1.9.0", optional = true }
 
 [features]
+# Opt-in exact schema number bounds; see octoscript-schema/exact-numbers.
+exact-numbers = ["octoscript-schema/exact-numbers"]
 bubblewrap-watchdog = ["dep:octoscript-sandbox"]
 in-process-worker = ["dep:octoscript-worker"]
 json-line-worker = []
