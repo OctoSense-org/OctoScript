@@ -33,6 +33,37 @@ not general JSON Schema: `$ref`, schema composition (`allOf`, `anyOf`,
 The implementation limits each schema source to 32 KiB, nesting to 32 schema
 levels, properties per object to 128, and enum values to 128.
 
+## Numeric precision
+
+`minimum` and `maximum` are compared as decimal digits times a power of ten,
+never through a floating-point conversion. How many digits survive depends on
+the `exact-numbers` feature of `octoscript-schema`, which turns on serde_json's
+`arbitrary_precision`:
+
+| | Without `exact-numbers` (default) | With `exact-numbers` |
+| --- | --- | --- |
+| Integers in the `i64`/`u64` range | exact | exact |
+| Decimals that round-trip through `f64` (`0.1`, `2.5e-3`, `1e21`) | exact | exact |
+| Integers beyond `u64` (a 30-digit bound) | rounded to the nearest `f64` | exact |
+| Decimals past `f64` precision (`0.30000000000000000001`) | rounded to the nearest `f64` | exact |
+
+Without the feature, serde_json rounds such a literal when it parses the JSON,
+in the schema and in the validated value alike, so two literals that differ
+only past `f64` precision compare equal. Nothing else about validation changes.
+
+The feature is off by default because `arbitrary_precision` is global: Cargo
+unifies it into every crate in the final build and it changes serde_json's
+`Number` representation for all of them, which breaks untagged or flattened
+numbers and code that inspects `Number` values. Libraries (including
+`octoscript-capabilities` and `octoscript-workflow`, which depend on
+`octoscript-schema` with `default-features = false`) leave it off and expose
+an `exact-numbers` passthrough. A leaf binary that owns its dependency graph
+can turn it on; the `octoscript` CLI and `octoscript-media-host` do:
+
+```toml
+octoscript-workflow = { version = "0.1.0", features = ["exact-numbers"] }
+```
+
 ## Registration
 
 ```rust

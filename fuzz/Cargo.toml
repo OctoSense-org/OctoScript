@@ -16,11 +16,11 @@ libfuzzer-sys = "0.4"
 lsp-server = "0.9.0"
 lsp-types = "0.97.0"
 serde_json = "1.0.150"
-octoscript-capabilities = { version = "0.1.0", path = "../crates/octoscript-capabilities", features = ["durable-audit-journal", "http-endpoint-catalog", "json-line-worker"] }
+octoscript-capabilities = { version = "0.1.0", path = "../crates/octoscript-capabilities", features = ["durable-audit-journal", "exact-numbers", "http-endpoint-catalog", "json-line-worker"] }
 octoscript-core = { path = "../crates/octoscript-core" }
 octoscript-protocol = { version = "0.1.0", path = "../crates/octoscript-protocol" }
 octoscript-sandbox = { version = "0.1.0", path = "../crates/octoscript-sandbox" }
-octoscript-schema = { version = "0.1.0", path = "../crates/octoscript-schema" }
+octoscript-schema = { version = "0.1.0", path = "../crates/octoscript-schema", features = ["exact-numbers"] }
 octoscript-storage = { version = "0.1.0", path = "../crates/octoscript-storage" }
 octoscript-worker = { version = "0.1.0", path = "../crates/octoscript-worker" }
 octoscript-workflow = { version = "0.1.0", path = "../crates/octoscript-workflow" }
