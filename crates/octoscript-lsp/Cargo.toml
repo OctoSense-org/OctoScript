@@ -16,6 +16,6 @@ serde_json = "1.0.150"
 octoscript-core = { path = "../octoscript-core" }
 
 [dev-dependencies]
-octoscript-capabilities = { path = "../octoscript-capabilities" }
-octoscript-schema = { path = "../octoscript-schema" }
-octoscript-workflow = { path = "../octoscript-workflow" }
+octoscript-capabilities = { path = "../octoscript-capabilities", default-features = false }
+octoscript-schema = { path = "../octoscript-schema", default-features = false }
+octoscript-workflow = { path = "../octoscript-workflow", default-features = false }

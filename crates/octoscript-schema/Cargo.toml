@@ -10,4 +10,15 @@ description = "Bounded executable JSON-schema subset for Octoscript tools"
 workspace = true
 
 [dependencies]
-serde_json = { version = "1.0.150", features = ["arbitrary_precision"] }
+serde_json = "1.0.150"
+
+[features]
+# Off by default. `arbitrary_precision` is a global serde_json switch: Cargo
+# unifies it into every crate in the final dependency graph and it changes how
+# serde_json represents `Number`, which breaks untagged/flattened numbers and
+# number inspection elsewhere. Only a leaf binary that owns its whole graph
+# should turn it on. See docs/schema-contracts.md#numeric-precision.
+default = []
+# Compare `minimum`/`maximum` against the original JSON literal, exactly, for
+# numbers beyond i64/u64/f64 precision.
+exact-numbers = ["serde_json/arbitrary_precision"]

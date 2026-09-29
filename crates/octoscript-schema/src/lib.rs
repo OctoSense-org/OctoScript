@@ -6,6 +6,28 @@
 //! `additionalProperties`, `items`, `minItems`, `maxItems`, `minLength`,
 //! `maxLength`, `minimum`, `maximum`, and `enum`. Annotation keywords such as
 //! `title` and `description` are accepted but do not affect validation.
+//!
+//! # Numeric precision and the `exact-numbers` feature
+//!
+//! `minimum` and `maximum` are compared as decimal digits times a power of
+//! ten, never through a floating-point conversion. What those digits are
+//! depends on how serde_json stored the number:
+//!
+//! - Without `exact-numbers` (the default), serde_json stores an `i64`, `u64`
+//!   or `f64`. Every integer in the `i64`/`u64` range and every decimal that
+//!   round-trips through `f64` (`0.1`, `2.5e-3`, `1e21`) compares exactly.
+//!   A literal that needs more precision than that is rounded to the nearest
+//!   `f64` when it is parsed, both in schemas and in validated values: a
+//!   30-digit integer bound, or `0.30000000000000000001` versus
+//!   `0.30000000000000000002`, can compare equal.
+//! - With `exact-numbers`, serde_json's `arbitrary_precision` keeps the
+//!   original literal and every finite JSON number compares exactly.
+//!
+//! `arbitrary_precision` is a global serde_json switch: Cargo unifies it into
+//! the whole dependency graph and it changes serde_json's `Number`
+//! representation for every other crate in that graph. Libraries should
+//! therefore leave `exact-numbers` off and let the final binary decide; the
+//! `octoscript` CLI turns it on.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -891,6 +913,9 @@ mod tests {
         integer_schema.validate(&json!(1.0)).unwrap();
     }
 
+    // Needs the original literal: without `exact-numbers` serde_json parses
+    // both sides of this comparison to the same f64.
+    #[cfg(feature = "exact-numbers")]
     #[test]
     fn compares_decimal_constraints_without_floating_point_rounding() {
         let schema = JsonSchema::compile(
@@ -906,6 +931,164 @@ mod tests {
         schema.validate(&allowed).unwrap();
         let error = schema.validate(&rejected).unwrap_err();
         assert_eq!(error.message, "number is above maximum");
+    }
+
+    #[cfg(feature = "exact-numbers")]
+    #[test]
+    fn compares_integer_bounds_beyond_u64_exactly() {
+        let schema = JsonSchema::compile(
+            serde_json::from_str(r#"{"type":"integer","maximum":123456789012345678901234567890}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        schema
+            .validate(&serde_json::from_str("123456789012345678901234567890").unwrap())
+            .unwrap();
+        let error = schema
+            .validate(&serde_json::from_str("123456789012345678901234567891").unwrap())
+            .unwrap_err();
+        assert_eq!(error.message, "number is above maximum");
+    }
+
+    /// Documents what is lost without `exact-numbers`: literals that differ
+    /// only past f64 precision collapse to the same value.
+    #[cfg(not(feature = "exact-numbers"))]
+    #[test]
+    fn without_exact_numbers_bounds_use_f64_precision_beyond_integers() {
+        let schema = JsonSchema::compile(
+            serde_json::from_str(r#"{"type":"number","maximum":0.30000000000000000001}"#).unwrap(),
+        )
+        .unwrap();
+        // 0.30000000000000000002 rounds to the same f64 as the bound.
+        schema
+            .validate(&serde_json::from_str("0.30000000000000000002").unwrap())
+            .unwrap();
+    }
+
+    fn parse_json(source: &str) -> Value {
+        serde_json::from_str(source).unwrap()
+    }
+
+    #[test]
+    fn integer_bounds_are_inclusive_at_both_ends() {
+        let schema =
+            JsonSchema::compile(json!({"type": "integer", "minimum": -3, "maximum": 7})).unwrap();
+        for allowed in [-3, 0, 7] {
+            schema.validate(&json!(allowed)).unwrap();
+        }
+        assert_eq!(
+            schema.validate(&json!(-4)).unwrap_err().message,
+            "number is below minimum"
+        );
+        assert_eq!(
+            schema.validate(&json!(8)).unwrap_err().message,
+            "number is above maximum"
+        );
+        assert_eq!(
+            schema.validate(&json!(6.5)).unwrap_err().message,
+            "expected integer"
+        );
+    }
+
+    #[test]
+    fn integer_bounds_at_the_i64_and_u64_extremes_are_exact() {
+        let schema = JsonSchema::compile(json!({
+            "type": "integer",
+            "minimum": i64::MIN,
+            "maximum": u64::MAX
+        }))
+        .unwrap();
+        schema.validate(&json!(i64::MIN)).unwrap();
+        schema.validate(&json!(u64::MAX)).unwrap();
+        schema.validate(&json!(0)).unwrap();
+
+        let below = JsonSchema::compile(json!({"type": "integer", "minimum": i64::MIN + 1}))
+            .unwrap()
+            .validate(&json!(i64::MIN))
+            .unwrap_err();
+        assert_eq!(below.message, "number is below minimum");
+        let above = JsonSchema::compile(json!({"type": "integer", "maximum": u64::MAX - 1}))
+            .unwrap()
+            .validate(&json!(u64::MAX))
+            .unwrap_err();
+        assert_eq!(above.message, "number is above maximum");
+    }
+
+    #[test]
+    fn decimal_bounds_compare_exactly_for_f64_representable_literals() {
+        let schema = JsonSchema::compile(parse_json(
+            r#"{"type":"number","minimum":0.1,"maximum":0.3}"#,
+        ))
+        .unwrap();
+        for allowed in ["0.1", "0.10", "0.2", "0.3", "0.30"] {
+            schema.validate(&parse_json(allowed)).unwrap();
+        }
+        // 0.1 + 0.2 is 0.30000000000000004 in f64, which is above 0.3.
+        assert_eq!(
+            schema.validate(&json!(0.1 + 0.2)).unwrap_err().message,
+            "number is above maximum"
+        );
+        assert_eq!(
+            schema.validate(&parse_json("0.09999")).unwrap_err().message,
+            "number is below minimum"
+        );
+        assert_eq!(
+            schema.validate(&parse_json("-0.2")).unwrap_err().message,
+            "number is below minimum"
+        );
+    }
+
+    #[test]
+    fn exponent_literals_compare_by_value() {
+        let schema = JsonSchema::compile(parse_json(
+            r#"{"type":"number","minimum":-1e-7,"maximum":1e21}"#,
+        ))
+        .unwrap();
+        for allowed in [
+            "1e21",
+            "1E+21",
+            "999999999999999999999",
+            "-1e-7",
+            "-0.0000001",
+            "0",
+        ] {
+            schema.validate(&parse_json(allowed)).unwrap();
+        }
+        assert_eq!(
+            schema
+                .validate(&parse_json("1.0000001e21"))
+                .unwrap_err()
+                .message,
+            "number is above maximum"
+        );
+        assert_eq!(
+            schema.validate(&parse_json("-2e-7")).unwrap_err().message,
+            "number is below minimum"
+        );
+
+        let integer = JsonSchema::compile(json!({"type": "integer", "maximum": 100})).unwrap();
+        integer.validate(&parse_json("1e2")).unwrap();
+        integer.validate(&parse_json("1.0")).unwrap();
+        assert_eq!(
+            integer.validate(&parse_json("1.01e2")).unwrap_err().message,
+            "number is above maximum"
+        );
+        assert_eq!(
+            integer.validate(&parse_json("1.5")).unwrap_err().message,
+            "expected integer"
+        );
+    }
+
+    #[test]
+    fn rejects_minimum_above_maximum_across_representations() {
+        assert!(matches!(
+            JsonSchema::compile(parse_json(r#"{"type":"number","minimum":1e1,"maximum":9.5}"#)),
+            Err(SchemaError::InvalidKeyword { keyword, .. }) if keyword == "minimum"
+        ));
+        JsonSchema::compile(parse_json(
+            r#"{"type":"number","minimum":1e1,"maximum":10}"#,
+        ))
+        .unwrap();
     }
 
     #[test]

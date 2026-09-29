@@ -2,6 +2,8 @@
 
 English | [简体中文](README.zh-CN.md)
 
+> **Building an OctoSense app?** You do not need this repository: it is the standalone OctoScript language runtime (VM, capabilities, workflows, LSP). An app's `main.splash` runs on the Makepad-based runtime that the app tools set up for you, and the language an app may use is documented in [SCRIPT-API](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/docs/SCRIPT-API.md). Start from the [OctoSense organization profile](https://github.com/OctoSense-org)'s reading order: [OctoScript-App-Design-Flow `AGENTS.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/AGENTS.md) → [`flows/README.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/flows/README.md) → [`docs/QUICKSTART.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/docs/QUICKSTART.md).
+
 Octoscript is a capability-first scripting runtime for dynamic workflows, tool
 orchestration, and data transformation. It starts from the Makepad Octoscript VM
 and keeps UI support optional rather than making UI the language boundary.
@@ -732,6 +734,9 @@ both keys with JSON `null`. See [editor workflow-data projection](docs/workflow-
   fixed-file and feature-gated HTTP endpoint/origin catalogs, aggregate catalog
   limits, safe host bridge, and a sealed static-catalog mobile/embedded profile.
 - `octoscript-schema`: bounded executable JSON-schema subset for tool contracts.
+  Exact number bounds beyond `i64`/`u64`/`f64` precision are the opt-in
+  `exact-numbers` feature (serde_json `arbitrary_precision`), off in libraries
+  and on in the `octoscript` CLI; see [numeric precision](docs/schema-contracts.md#numeric-precision).
 - `octoscript-storage`: host-only authenticated records, rollback protection, and
   fenced compare-and-swap backend boundary, plus an optional anchored SQLite
   payload adapter that requires a platform trust anchor and a bounded

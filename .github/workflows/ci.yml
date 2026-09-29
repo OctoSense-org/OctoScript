@@ -21,6 +21,13 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
+      # Library consumers build these crates without serde_json's global
+      # arbitrary_precision; test that configuration and keep it out of their graph.
+      - run: cargo test -p octoscript-schema -p octoscript-capabilities -p octoscript-workflow
+      - run: >
+          ! cargo tree -e normal,features -i serde_json
+          -p octoscript-schema -p octoscript-capabilities -p octoscript-workflow
+          | grep arbitrary_precision
       - run: cargo check --locked -p octoscript-sandbox --tests --target aarch64-unknown-linux-gnu
       - run: cargo check --locked -p octoscript-sandbox --tests --target riscv64gc-unknown-linux-gnu
       - run: cargo check --locked -p octoscript-sandbox --tests --target x86_64-pc-windows-gnu
