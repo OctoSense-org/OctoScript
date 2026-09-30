@@ -9385,7 +9385,7 @@ pub const CARD_STATE_KEY: &str = "@card";
 /// Nothing in the store is authored by the model. A card cannot name an
 /// instance, cannot address another instance's cell, and cannot write anything
 /// except through a declared transition on its own state.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct InstanceStore {
     /// `instance-key` → field → value.
     cells: BTreeMap<String, BTreeMap<String, (serde_json::Value, ValueOrigin)>>,
@@ -9398,6 +9398,74 @@ pub struct InstanceStore {
 }
 
 impl InstanceStore {
+    /// Versioned, bounded host snapshot. The host must keep these bytes in a
+    /// host-owned directory: origins are trusted metadata, not app input.
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
+        self.check_snapshot_limits()?;
+        let bytes = serde_json::to_vec(&serde_json::json!({"schema": 1, "state": self}))
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > 1_048_576 {
+            return Err("Card state snapshot exceeds 1 MiB".into());
+        }
+        Ok(bytes)
+    }
+
+    /// Read only snapshots written by the host. The next realization still
+    /// reconciles component schema and prunes cells that are no longer live.
+    pub fn from_snapshot_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() > 1_048_576 {
+            return Err("Card state snapshot exceeds 1 MiB".into());
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Snapshot {
+            schema: u32,
+            state: InstanceStore,
+        }
+        let snapshot: Snapshot = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        if snapshot.schema != 1 {
+            return Err("unsupported Card state snapshot schema".into());
+        }
+        snapshot.state.check_snapshot_limits()?;
+        Ok(snapshot.state)
+    }
+
+    fn check_snapshot_limits(&self) -> Result<(), String> {
+        if self.cells.len() > 1024 || self.schemas.len() > 128 || self.shapes.len() > 128 {
+            return Err("Card state snapshot has too many instances or schemas".into());
+        }
+        let mut fields = 0usize;
+        let mut value_bytes = 0usize;
+        for (key, values) in &self.cells {
+            if key.len() > 256 {
+                return Err("Card state instance key is too long".into());
+            }
+            fields = fields.saturating_add(values.len());
+            if fields > 8192 || values.keys().any(|field| field.len() > 256) {
+                return Err("Card state snapshot has too many or oversized fields".into());
+            }
+            for (value, _) in values.values() {
+                value_bytes = value_bytes
+                    .saturating_add(serde_json::to_vec(value).map_err(|e| e.to_string())?.len());
+                if value_bytes > 1_048_576 {
+                    return Err("Card state snapshot exceeds 1 MiB".into());
+                }
+            }
+        }
+        if self.schemas.keys().any(|name| name.len() > 256)
+            || self.shapes.iter().any(|(name, paths)| {
+                name.len() > 256
+                    || paths.len() > 8192
+                    || paths
+                        .iter()
+                        .any(|(path, shape)| path.len() > 256 || shape.len() > 4096)
+            })
+        {
+            return Err("Card state snapshot has oversized schemas".into());
+        }
+        Ok(())
+    }
+
     pub fn get(&self, key: &str, field: &str) -> Option<&serde_json::Value> {
         self.cells.get(key)?.get(field).map(|(v, _)| v)
     }
