@@ -1,0 +1,26 @@
+# ledger news.chat@1.0.0
+# level:   L0
+# profile: ui/l0
+#
+# Chat with the app's agent inside a card (profile §5.15). The transcript is a
+# conversation the host holds for this app; sending appends what the user typed
+# and the host appends the agent's reply. The card writes no message itself.
+
+source convo sys.chat(app: "os.news", thread: "main", fields: [entries, id, role, text])
+
+state draft { shape: text, initial: "" }
+
+copy title { class: vocabulary, en: "ASK THE NEWS AGENT", zh: "问新闻助手" }
+copy ask   { class: vocabulary, en: "Ask about today's news", zh: "问问今天的新闻" }
+
+event send { convo: append($value), draft: clear }
+
+view root  Surface(pad: .page) {
+             Col(gap: 8) {
+               TextEyebrow(text: copy.title)
+               for m in convo.entries key m.id {
+                 ChatEntry(text: m.text, role: m.role)
+               }
+               Field(text: draft, placeholder: copy.ask, on_commit: send, width: .fill)
+             }
+           }

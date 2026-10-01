@@ -3021,12 +3021,15 @@ fn changing_an_initial_changes_the_schema() {
 
 // ─── §4 copy provenance ──────────────────────────────────────────────────────
 
-/// §4 requires a rendered literal to be "vocabulary or source-derived". That
-/// was undecidable, not merely unenforced: `parse_locale_map` kept only entries
-/// whose value was a STRING, and `class: vocabulary` is an identifier — so the
-/// provenance was discarded before anything could read it.
+/// §4 requires a rendered literal's class to be known. That was undecidable,
+/// not merely unenforced: `parse_locale_map` kept only entries whose value was a
+/// STRING, and `class: vocabulary` is an identifier — so the provenance was
+/// discarded before anything could read it.
+///
+/// §4.2 (2026-10-01): model-written text is ALLOWED in a text slot, marked as
+/// AI-written. It is still refused anywhere it would be part of a control.
 #[test]
-fn provenance_survives_parsing_and_model_copy_is_refused() {
+fn provenance_survives_parsing_and_model_copy_is_confined_to_text_slots() {
     let vocabulary = check_ui_l0_named(
         "vocab",
         "copy hi { class: vocabulary, en: \"Top Stories\" }\nview root TextTitle(text: copy.hi)",
@@ -3049,16 +3052,27 @@ fn provenance_survives_parsing_and_model_copy_is_refused() {
          view root TextTitle(text: copy.claim)",
     );
     assert!(
-        !model.valid,
-        "model-authored text must not reach the screen"
+        model.valid,
+        "model-written text may fill a text slot: {:#?}",
+        model.diagnostics
     );
+
+    // A chip's label sits on a tap target: model text there is part of a
+    // control, which §4.2 keeps strict.
+    let label = check_ui_l0_named(
+        "model",
+        "copy claim { class: model-copy, en: \"Approve\" }\n\
+         event go { }\n\
+         view root Chip(text: copy.claim, on_tap: go)",
+    );
+    assert!(!label.valid, "model text may not label a control");
     assert!(
-        model
+        label
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("model-copy")),
+            .any(|d| d.message.contains("text the model wrote")),
         "{:#?}",
-        model.diagnostics
+        label.diagnostics
     );
 }
 
@@ -4108,12 +4122,15 @@ fn clear_restores_a_path_valued_initial() {
     );
 }
 
-/// §4 refuses model-authored text in a rendering position. It was enforced only
-/// where an element named `copy.x` directly, so any indirection defeated it.
-/// These are the routes: through a component prop, through a prop default, and
-/// through a transition that writes it into state.
+/// §4.2 admits model-written text in a TEXT SLOT and nowhere else. The rule
+/// was once enforced only where an element named `copy.x` directly, so any
+/// indirection defeated it; these are the routes, and each still decides.
+///
+/// Directly into a text slot, and through a transition into a `text` state (a
+/// draft), are allowed. Through a component prop — which could hand it to a
+/// control — and through a state initial are refused.
 #[test]
-fn model_copy_cannot_reach_the_screen_by_any_route() {
+fn model_copy_reaches_the_screen_only_through_a_text_slot() {
     const DECL: &str = "copy claim { class: model-copy, en: \"Revenue: $41.2M\" }\n";
 
     for (route, source) in [
@@ -4121,6 +4138,24 @@ fn model_copy_cannot_reach_the_screen_by_any_route() {
             "directly",
             format!("{DECL}view root TextTitle(text: copy.claim)"),
         ),
+        (
+            "through a transition into a draft",
+            format!(
+                "{DECL}state s {{ shape: text, initial: \"\" }}\n\
+                 event e {{ s: set(copy.claim) }}\n\
+                 view root Row(on_tap: e) {{ TextBody(text: s) }}"
+            ),
+        ),
+    ] {
+        let report = check_ui_l0_named("route", &source);
+        assert!(
+            report.valid,
+            "model-copy may reach a text slot {route}: {:#?}",
+            report.diagnostics
+        );
+    }
+
+    for (route, source) in [
         (
             "through a prop",
             format!(
@@ -4136,16 +4171,24 @@ fn model_copy_cannot_reach_the_screen_by_any_route() {
             ),
         ),
         (
-            "through a transition",
+            "through a transition into an enum",
+            format!(
+                "{DECL}state s {{ shape: enum[a, b], initial: a }}\n\
+                 event e {{ s: set(copy.claim) }}\nview root Row(on_tap: e) {{ Rule() }}"
+            ),
+        ),
+        (
+            "through a draft into a tap payload",
             format!(
                 "{DECL}state s {{ shape: text, initial: \"\" }}\n\
-                 event e {{ s: set(copy.claim) }}\nview root Row(on_tap: e) {{ Rule() }}"
+                 event e {{ s: set(copy.claim) }}\nevent pick {{ s: set($value) }}\n\
+                 view root Row(on_tap: pick, value: s) {{ Rule() }}"
             ),
         ),
     ] {
         assert!(
             !check_ui_l0_named("route", &source).valid,
-            "model-copy must not reach the screen {route}"
+            "model-copy must not reach a control {route}"
         );
     }
 
@@ -7093,7 +7136,7 @@ fn every_offered_field_has_a_translation() {
     // missing. `sys.digest` reads a file the host holds for the PUBLISHING app,
     // and no call made from the card could check which app that is. Checked
     // below to have no translation at all, so the list cannot hide a gap.
-    const HOST_ONLY: &[&str] = &["sys.digest"];
+    const HOST_ONLY: &[&str] = &["sys.digest", "sys.chat"];
 
     let mut missing: Vec<(String, String)> = Vec::new();
     for (capability, fields) in catalog::ANSWERS {
