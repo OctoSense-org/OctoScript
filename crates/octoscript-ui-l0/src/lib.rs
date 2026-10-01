@@ -3689,6 +3689,11 @@ pub mod catalog {
         ("sys.news_digest", &["query", "language", "count", "fields"]),
         ("sys.news_status", &["query", "language", "fields"]),
         ("sys.dataset", &["id", "fields"]),
+        // A digest the HOST holds for the card's own app: an agent run's
+        // findings, with the sources they cite (ADR 0002 §7 in OctoSense).
+        // `app` must be the publishing app, which only the host knows, so the
+        // host refuses any other; `id` names one stored run.
+        ("sys.digest", &["app", "id", "fields"]),
         ("sys.quakes", &["count", "offset", "fields"]),
         ("sys.news_item", &["id", "fields"]),
         // `symbols` names the UNIVERSE to rank. Without it the only universe is
@@ -3851,6 +3856,36 @@ pub mod catalog {
             ],
         ),
         ("sys.news_status", &["status", "message", "count"]),
+        // One template-independent shape, whatever workflow produced the run.
+        // `points` rows are `{id, text, label, cite, citations}` — `citations`
+        // are indexes into `sources`, `cite` the same as 1-based text — and
+        // `sources` rows `{id, n, title, source, url, published_at}`. Links
+        // come only from `sources`: model text carries none. The row fields
+        // are pooled with the record's, as `sys.weather`'s days are (see
+        // `declared_fields`): a loop over `d.points` reads what `fields:` asked.
+        (
+            "sys.digest",
+            &[
+                "status",
+                "topic",
+                "language",
+                "summary",
+                "retrieved_at",
+                "count",
+                "points",
+                "sources",
+                "id",
+                "text",
+                "label",
+                "cite",
+                "citations",
+                "n",
+                "title",
+                "source",
+                "url",
+                "published_at",
+            ],
+        ),
         (
             "sys.quakes",
             &["id", "mag", "place", "depth", "ago", "lat", "lon"],
@@ -4752,6 +4787,72 @@ fn validate_sources(card: &Card, sink: &mut Diagnostics) {
                 );
             }
         }
+    }
+    for source in card.sources.iter().filter(|s| s.helper == "sys.digest") {
+        check_digest_source(source, sink);
+    }
+}
+
+/// `sys.digest` names WHOSE digest and WHICH one, and both are required.
+///
+/// `app` is a literal: the host compares it with the app that published the
+/// card and refuses any other, so a card that computed it (a path into state or
+/// another source) would be asking the host to trust a value the card chose.
+/// `id` may be a literal or a path — an app may keep its latest run id in state —
+/// and a literal is checked here against the run-id charset
+/// (`[A-Za-z0-9_-]{1,64}`), so a card cannot name a path to a file.
+fn check_digest_source(source: &SourceDecl, sink: &mut Diagnostics) {
+    let arg = |name: &str| source.args.iter().find(|(n, _)| n == name).map(|(_, a)| a);
+    let app_ok = |v: &str| {
+        !v.is_empty()
+            && v.len() <= 64
+            && v.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    };
+    let id_ok = |v: &str| {
+        !v.is_empty()
+            && v.len() <= 64
+            && v.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    };
+    match arg("app") {
+        Some(SourceArg::Text(app)) if app_ok(app) => {}
+        Some(SourceArg::Text(app)) => sink.push(
+            source.line,
+            1,
+            format!("sys.digest: {app:?} is not an app id (1-64 of [A-Za-z0-9._-])"),
+        ),
+        Some(_) => sink.push(
+            source.line,
+            1,
+            "sys.digest: `app` must be a literal app id — the host checks it against the \
+             publishing app, so it cannot come from state or another source"
+                .to_string(),
+        ),
+        None => sink.push(
+            source.line,
+            1,
+            "sys.digest needs `app`: the card's own app id".to_string(),
+        ),
+    }
+    match arg("id") {
+        Some(SourceArg::Text(id)) if id_ok(id) => {}
+        Some(SourceArg::Path(_)) => {}
+        Some(SourceArg::Text(id)) => sink.push(
+            source.line,
+            1,
+            format!("sys.digest: {id:?} is not a digest id (1-64 of [A-Za-z0-9_-])"),
+        ),
+        Some(_) => sink.push(
+            source.line,
+            1,
+            "sys.digest: `id` must be a literal digest id or a path".to_string(),
+        ),
+        None => sink.push(
+            source.line,
+            1,
+            "sys.digest needs `id`: which of the app's digests".to_string(),
+        ),
     }
 }
 
@@ -7805,6 +7906,11 @@ pub mod makepad {
                 };
                 Some(format!("sys.airquality({lat}, {lon}, {path:?})"))
             }
+            // Host-answered only. The digest is a file the host holds for the
+            // publishing app, and only the host knows who that is; a backend
+            // call could not check `app` against the caller, so there is none
+            // and the value is the one the host injected.
+            "sys.digest" => None,
             "sys.dataset" => {
                 let id = text("id")?;
                 if !crate::catalog::answers("sys.dataset")?.contains(&binding.field.as_str()) {
