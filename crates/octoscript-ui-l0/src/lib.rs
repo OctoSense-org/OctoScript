@@ -1060,9 +1060,9 @@ enum Provenance {
     Vocabulary,
     /// Text the user wrote. Theirs to be wrong about.
     UserCopy,
-    /// Text the MODEL wrote. May not appear in a rendering position: this is
-    /// the class §4 exists to keep off the screen, because a model-authored
-    /// string is indistinguishable from a fact it invented.
+    /// Text the MODEL wrote. Admitted only in a text slot, where the kit marks
+    /// it AI-written so it cannot pass for a fact, and never anywhere it could
+    /// decide what an action does (§4.2).
     ModelCopy,
 }
 
@@ -3488,6 +3488,12 @@ pub mod catalog {
         // One chat message. The side is meaning (who said it); the theme
         // decides what mine-vs-theirs looks like.
         ("Bubble", &[("text", Text), ("side", Token(BUBBLE_SIDE))]),
+        // One entry of an in-card chat (§5.15): a `sys.chat` row, drawn as a
+        // bubble on the side its ROLE says. Both arguments must read the same
+        // row — `ChatEntry(text: m.text, role: m.role)` — so the label the
+        // host gave a message can never be paired with another message's text.
+        // A `model` entry carries the AI-written mark.
+        ("ChatEntry", &[("text", Text), ("role", Path)]),
         // The floating round action button, pinned over the page corner.
         ("Fab", &[("name", Token(ICON))]),
         // The bottom tab bar and its tabs — pinned to the page floor.
@@ -3624,6 +3630,50 @@ pub mod catalog {
         ),
     ];
 
+    /// The arguments that DISPLAY text and nothing else — the only places text
+    /// the model wrote may appear (§4.2).
+    ///
+    /// Not every `text`-kind argument: a chip's label sits on a tap target, a
+    /// tile's label names a measurement, an avatar's text is initials, and a
+    /// `Kit` argument chooses a component. Model text in any of those would
+    /// make a model-chosen string part of a control. `Field.text` is here
+    /// because a draft the model wrote is shown in a field for the user to
+    /// edit; what the field COMMITS is user input.
+    pub const TEXT_SLOTS: &[(&str, &str)] = &[
+        ("TextHero", "text"),
+        ("TextTitle", "text"),
+        ("TextBody", "text"),
+        ("TextRow", "text"),
+        ("TextEyebrow", "text"),
+        ("TextCaption", "text"),
+        ("Band", "text"),
+        ("Bubble", "text"),
+        ("ChatEntry", "text"),
+        ("Field", "text"),
+    ];
+
+    pub fn is_text_slot(ctor: &str, arg: &str) -> bool {
+        TEXT_SLOTS.iter().any(|(c, a)| *c == ctor && *a == arg)
+    }
+
+    /// Host-source fields whose VALUE the model wrote (§4.2). The host answers
+    /// them, so they are not card-authored facts; they are the model's own
+    /// words, and they carry the same restrictions as `model-copy`.
+    ///
+    /// A `sys.chat` entry's `text` is listed whatever its role: the checker
+    /// cannot see a row's role, so every entry's text is treated as model text
+    /// for what it may DO, and `ChatEntry` reads the role to decide the mark.
+    pub const MODEL_TEXT: &[(&str, &[&str])] = &[
+        ("sys.digest", &["summary", "text", "label"]),
+        ("sys.chat", &["text"]),
+    ];
+
+    pub fn is_model_text(helper: &str, field: &str) -> bool {
+        MODEL_TEXT
+            .iter()
+            .any(|(h, fields)| *h == helper && fields.contains(&field))
+    }
+
     pub fn lookup(name: &str) -> Option<Args> {
         CONSTRUCTORS
             .iter()
@@ -3694,6 +3744,10 @@ pub mod catalog {
         // `app` must be the publishing app, which only the host knows, so the
         // host refuses any other; `id` names one stored run.
         ("sys.digest", &["app", "id", "fields"]),
+        // A conversation the HOST holds for the card's own app (§5.15): the
+        // transcript between the user and the app's agent. Same scoping as
+        // `sys.digest` — `app` is the publisher, `thread` one conversation.
+        ("sys.chat", &["app", "thread", "fields"]),
         ("sys.quakes", &["count", "offset", "fields"]),
         ("sys.news_item", &["id", "fields"]),
         // `symbols` names the UNIVERSE to rank. Without it the only universe is
@@ -3886,6 +3940,12 @@ pub mod catalog {
                 "published_at",
             ],
         ),
+        // `entries` rows are `{id, role, text, at}`; `role` is `user`, `model`
+        // or `host`. Pooled with the record's fields, as a digest's rows are.
+        (
+            "sys.chat",
+            &["status", "count", "entries", "id", "role", "text", "at"],
+        ),
         (
             "sys.quakes",
             &["id", "mag", "place", "depth", "ago", "lat", "lon"],
@@ -4020,6 +4080,10 @@ pub mod catalog {
         ("sys.reading", &["append", "remove"]),
         ("sys.topics", &["append", "remove"]),
         ("sys.link", &["set", "clear"]),
+        // Sending a message: the payload is what the user committed in a
+        // `Field`, appended as a `user` entry. The host runs the agent and
+        // appends its reply; a card cannot write a `model` entry.
+        ("sys.chat", &["append"]),
     ];
 
     pub fn mutable(name: &str) -> Option<&'static [&'static str]> {
@@ -4150,7 +4214,7 @@ fn validate_transitions(card: &Card, sink: &mut Diagnostics) {
         &card.states,
         &card_readable,
         &card_events,
-        &card.copies,
+        &Scope::card(card),
         &card.sources,
         sink,
     );
@@ -4182,7 +4246,7 @@ fn validate_transitions(card: &Card, sink: &mut Diagnostics) {
             &component.states,
             &readable,
             &events,
-            &card.copies,
+            &Scope::component(card, component),
             // A component may write a durable collection too: the card's
             // sources are in scope for it (§5.3 forbids card STATE, not
             // sources), so the same rules must reach here.
@@ -4249,7 +4313,7 @@ fn check_event_batch(
     states: &[StateDecl],
     readable: &[String],
     event_names: &[String],
-    copies: &[CopyDecl],
+    scope: &Scope,
     sources: &[SourceDecl],
     sink: &mut Diagnostics,
 ) {
@@ -4260,6 +4324,23 @@ fn check_event_batch(
             // hands it to the host — so none of the shape checks below apply,
             // and this is settled before them rather than inside them.
             if let Some(source) = sources.iter().find(|s| s.name == transition.target) {
+                // §4.2: model text is never written to a host store. A store
+                // holds references (§5.12) — a ticker, a place, a URL, a
+                // preference — and each is something a later action reads.
+                if let Form::Set(SetSource::Path(path)) = &transition.form {
+                    if scope.is_model_text(path) {
+                        sink.push(
+                            transition.line,
+                            transition.column,
+                            format!(
+                                "{path} is text the model wrote and may not be written to \
+                                 {:?} ({}): a host store holds references a later action \
+                                 reads. Write it into a `text` state instead (profile §4.2)",
+                                transition.target, source.helper
+                            ),
+                        );
+                    }
+                }
                 let accepted = catalog::mutable(&source.helper);
                 let verb = match &transition.form {
                     Form::Append => "append",
@@ -4439,28 +4520,30 @@ fn check_event_batch(
                     );
                 }
                 Form::Set(SetSource::Path(path)) => {
-                    // §4 travels with the value: writing model-authored text
-                    // into state renders it just as surely as naming it in a
-                    // view, one step later.
+                    // §4.2 travels with the value: model text may be written
+                    // into a `text` state — a draft — and that state is then
+                    // model text wherever it is read (`Scope::model_states`).
+                    // Into any other shape it would choose a member, a number
+                    // or a flag, which is the model deciding what a card does.
+                    if scope.is_model_text(path) && state.shape != Shape::Text {
+                        sink.push(
+                            transition.line,
+                            transition.column,
+                            format!(
+                                "{path} is text the model wrote; it may be written only into a \
+                                 `text` state (a draft), and {:?} is {} (profile §4.2)",
+                                transition.target,
+                                shape_name(&state.shape)
+                            ),
+                        );
+                    }
                     if let Some(name) = path.strip_prefix("copy.") {
-                        match copies.iter().find(|c| c.name == name) {
-                            Some(decl) if decl.provenance == Provenance::ModelCopy => {
-                                sink.push(
-                                    transition.line,
-                                    transition.column,
-                                    format!(
-                                        "copy.{name} is `model-copy` and may not be written \
-                                         into state; only `vocabulary` and `user-copy` may \
-                                         (profile §4)"
-                                    ),
-                                );
-                            }
-                            None => sink.push(
+                        if !scope.copies.iter().any(|c| c.name == name) {
+                            sink.push(
                                 transition.line,
                                 transition.column,
                                 format!("copy.{name} is not declared"),
-                            ),
-                            _ => {}
+                            );
                         }
                     }
                     let root = root_of(path);
@@ -4767,6 +4850,19 @@ fn validate_sources(card: &Card, sink: &mut Diagnostics) {
                         if !card.states.iter().any(|st| root_of(&st.path) == root) {
                             sink.push(source.line, 1, format!("{root:?} is not a declared state"));
                         }
+                        // A draft holding model text is model text (§4.2): it
+                        // may not choose what the host fetches.
+                        if scope.is_model_text(rest) {
+                            sink.push(
+                                source.line,
+                                1,
+                                format!(
+                                    "{path} holds text the model wrote and cannot be a source \
+                                     argument: it would choose what the host fetches \
+                                     (profile §4.2)"
+                                ),
+                            );
+                        }
                     }
                     None => check_path(path, scope, source.line, 1, sink),
                 }
@@ -4788,8 +4884,20 @@ fn validate_sources(card: &Card, sink: &mut Diagnostics) {
             }
         }
     }
-    for source in card.sources.iter().filter(|s| s.helper == "sys.digest") {
-        check_digest_source(source, sink);
+    for source in card.sources.iter() {
+        match source.helper.as_str() {
+            "sys.digest" => check_app_scoped_source(
+                source,
+                ("id", "digest id", "which of the app's digests"),
+                sink,
+            ),
+            "sys.chat" => check_app_scoped_source(
+                source,
+                ("thread", "thread id", "which of the app's conversations"),
+                sink,
+            ),
+            _ => {}
+        }
     }
 }
 
@@ -4801,7 +4909,14 @@ fn validate_sources(card: &Card, sink: &mut Diagnostics) {
 /// `id` may be a literal or a path — an app may keep its latest run id in state —
 /// and a literal is checked here against the run-id charset
 /// (`[A-Za-z0-9_-]{1,64}`), so a card cannot name a path to a file.
-fn check_digest_source(source: &SourceDecl, sink: &mut Diagnostics) {
+///
+/// `sys.chat` is scoped the same way, with `thread` in place of `id` (§5.15).
+fn check_app_scoped_source(
+    source: &SourceDecl,
+    (id_name, id_noun, id_what): (&str, &str, &str),
+    sink: &mut Diagnostics,
+) {
+    let helper = source.helper.as_str();
     let arg = |name: &str| source.args.iter().find(|(n, _)| n == name).map(|(_, a)| a);
     let app_ok = |v: &str| {
         !v.is_empty()
@@ -4820,38 +4935,39 @@ fn check_digest_source(source: &SourceDecl, sink: &mut Diagnostics) {
         Some(SourceArg::Text(app)) => sink.push(
             source.line,
             1,
-            format!("sys.digest: {app:?} is not an app id (1-64 of [A-Za-z0-9._-])"),
+            format!("{helper}: {app:?} is not an app id (1-64 of [A-Za-z0-9._-])"),
         ),
         Some(_) => sink.push(
             source.line,
             1,
-            "sys.digest: `app` must be a literal app id — the host checks it against the \
-             publishing app, so it cannot come from state or another source"
-                .to_string(),
+            format!(
+                "{helper}: `app` must be a literal app id — the host checks it against the \
+                 publishing app, so it cannot come from state or another source"
+            ),
         ),
         None => sink.push(
             source.line,
             1,
-            "sys.digest needs `app`: the card's own app id".to_string(),
+            format!("{helper} needs `app`: the card's own app id"),
         ),
     }
-    match arg("id") {
+    match arg(id_name) {
         Some(SourceArg::Text(id)) if id_ok(id) => {}
         Some(SourceArg::Path(_)) => {}
         Some(SourceArg::Text(id)) => sink.push(
             source.line,
             1,
-            format!("sys.digest: {id:?} is not a digest id (1-64 of [A-Za-z0-9_-])"),
+            format!("{helper}: {id:?} is not a {id_noun} (1-64 of [A-Za-z0-9_-])"),
         ),
         Some(_) => sink.push(
             source.line,
             1,
-            "sys.digest: `id` must be a literal digest id or a path".to_string(),
+            format!("{helper}: `{id_name}` must be a literal id or a path"),
         ),
         None => sink.push(
             source.line,
             1,
-            "sys.digest needs `id`: which of the app's digests".to_string(),
+            format!("{helper} needs `{id_name}`: {id_what}"),
         ),
     }
 }
@@ -4971,6 +5087,12 @@ struct Scope {
     /// field list, and a component prop is a record whose shape the card cannot
     /// see from here.
     fields: Vec<(String, Vec<String>)>,
+    /// The capability behind each source name and each loop binder over one,
+    /// so a read of `p.text` can be traced to `sys.digest` (§4.2).
+    helpers: Vec<(String, String)>,
+    /// States a transition writes model text into. Their value is the model's
+    /// words from then on, and §4.2 restricts them exactly as it does the text.
+    model_states: Vec<String>,
 }
 
 /// What each source was asked for, as the names a reader may then name.
@@ -5021,7 +5143,10 @@ impl Scope {
             events,
             forbidden_state: Vec::new(),
             fields: declared_fields(card),
+            helpers: source_helpers(card),
+            model_states: Vec::new(),
         }
+        .with_model_states(&card.states, &card.events)
     }
 
     fn component(card: &Card, component: &Component) -> Self {
@@ -5053,7 +5178,69 @@ impl Scope {
             // whatever the caller passes, and §5.2 does not make the caller
             // declare it.
             fields: declared_fields(card),
+            helpers: source_helpers(card),
+            model_states: Vec::new(),
         }
+        .with_model_states(&component.states, &component.events)
+    }
+
+    /// Mark every state a `set(path)` writes model text into, to a fixed point:
+    /// `b: set(a)` after `a: set(copy.m)` makes `b` model text too. Bounded by
+    /// the number of states, since each round that continues adds one.
+    fn with_model_states(mut self, states: &[StateDecl], events: &[EventDecl]) -> Self {
+        for _ in 0..=states.len() {
+            let mut changed = false;
+            for transition in events.iter().flat_map(|e| &e.transitions) {
+                let Form::Set(SetSource::Path(path)) = &transition.form else {
+                    continue;
+                };
+                let target = root_of(&transition.target);
+                if states.iter().any(|s| s.path == transition.target)
+                    && !self.model_states.contains(&target)
+                    && self.is_model_text(path)
+                {
+                    self.model_states.push(target);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        self
+    }
+
+    /// The capability behind `path`, through any loop binder over it.
+    fn source_helper(&self, path: &str) -> Option<&str> {
+        self.helpers
+            .iter()
+            .rev()
+            .find(|(name, _)| {
+                path == name
+                    || path
+                        .strip_prefix(name.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+            .map(|(_, helper)| helper.as_str())
+    }
+
+    /// Whether `path` reads text the MODEL wrote (§4.2): a `model-copy`
+    /// declaration, a model-written field of a host source, or a state such
+    /// text was written into.
+    fn is_model_text(&self, path: &str) -> bool {
+        if let Some(name) = path.strip_prefix("copy.") {
+            return self
+                .copies
+                .iter()
+                .any(|c| c.name == name && c.provenance == Provenance::ModelCopy);
+        }
+        if self.model_states.contains(&root_of(path)) {
+            return true;
+        }
+        path.contains('.')
+            && self.source_helper(path).is_some_and(|helper| {
+                catalog::is_model_text(helper, path.rsplit('.').next().unwrap_or(path))
+            })
     }
 
     /// Whether `root` names something whose fields are known, and if so whether
@@ -5095,6 +5282,14 @@ impl Scope {
     }
 }
 
+/// Each source's declared name and the capability that answers it.
+fn source_helpers(card: &Card) -> Vec<(String, String)> {
+    card.sources
+        .iter()
+        .map(|s| (s.name.clone(), s.helper.clone()))
+        .collect()
+}
+
 fn root_of<S: AsRef<str>>(path: S) -> String {
     path.as_ref()
         .split('.')
@@ -5113,6 +5308,7 @@ fn walk(
     card: &Card,
     sink: &mut Diagnostics,
 ) {
+    let helpers_before = scope.helpers.len();
     match element.name.as_str() {
         "" | "slot" | "into" => {}
         "for" => {
@@ -5129,6 +5325,33 @@ fn walk(
                         format!(
                             "the key names {root:?}, but this loop binds {binder:?} — a key \
                              must be a path into the item being iterated (profile §5.1)"
+                        ),
+                    );
+                }
+            }
+            // A key is identity, and identity is in every event target a row
+            // raises. Model text may not choose it (§4.2).
+            if let (
+                Some(Arg {
+                    value: Operand::Path(p),
+                    ..
+                }),
+                Some(key),
+            ) = (element.args.first(), &element.key_path)
+            {
+                let field = key.rsplit('.').next().unwrap_or(key);
+                if key.contains('.')
+                    && scope
+                        .source_helper(p)
+                        .is_some_and(|helper| catalog::is_model_text(helper, field))
+                {
+                    sink.push(
+                        element.line,
+                        element.column,
+                        format!(
+                            "{key} is text the model wrote and cannot be a loop key: a key is \
+                             an instance's identity, which every event it raises carries \
+                             (profile §4.2)"
                         ),
                     );
                 }
@@ -5156,6 +5379,11 @@ fn walk(
                         scope.fields.iter().find(|(r, _)| *r == root_of(p)).cloned()
                     {
                         scope.fields.push((binder.clone(), names));
+                    }
+                    // And for the capability behind it, so `m.text` is known
+                    // to be a chat entry's text (§4.2).
+                    if let Some(helper) = scope.source_helper(p).map(str::to_owned) {
+                        scope.helpers.push((binder.clone(), helper));
                     }
                 }
             }
@@ -5264,6 +5492,9 @@ fn walk(
                     format!("{name:?} is not an L0 constructor or a declared component"),
                 );
             }
+            if name == "ChatEntry" {
+                check_chat_entry(element, scope, sink);
+            }
             for arg in &element.args {
                 check_arg(
                     data_positions,
@@ -5287,6 +5518,45 @@ fn walk(
         for _ in &element.binders {
             scope.roots.pop();
         }
+        scope.helpers.truncate(helpers_before);
+    }
+}
+
+/// `ChatEntry(text: m.text, role: m.role)` — both read ONE `sys.chat` row
+/// (§5.15). The role decides the bubble's side and the AI-written mark, so it
+/// must be the role the HOST gave the very message being shown: a role from
+/// another row, a state or a literal would let a card present the model's words
+/// as the user's.
+fn check_chat_entry(element: &Element, scope: &Scope, sink: &mut Diagnostics) {
+    let path = |name: &str| {
+        element
+            .args
+            .iter()
+            .find(|a| a.name == name)
+            .and_then(|a| match &a.value {
+                Operand::Path(p) => Some(p.as_str()),
+                _ => None,
+            })
+    };
+    let row_of = |p: &str, field: &str| -> Option<String> {
+        let row = p.strip_suffix(field)?.strip_suffix('.')?;
+        (scope.source_helper(p) == Some("sys.chat")).then(|| row.to_owned())
+    };
+    let ok = match (path("text"), path("role")) {
+        (Some(text), Some(role)) => {
+            matches!((row_of(text, "text"), row_of(role, "role")), (Some(a), Some(b)) if a == b)
+        }
+        _ => false,
+    };
+    if !ok {
+        sink.push(
+            element.line,
+            element.column,
+            "ChatEntry reads one `sys.chat` entry: `ChatEntry(text: m.text, role: m.role)`, \
+             both off the same row, so the host's role always labels its own message \
+             (profile §5.15)"
+                .to_string(),
+        );
     }
 }
 
@@ -5491,7 +5761,16 @@ fn check_arg(
         // A component prop has no catalogued kind, and may legitimately receive an
         // event name — profile §5.4, outputs are event props. Accept either.
         (Operand::Path(path), None) if scope.events.iter().any(|e| e == path) => {}
-        (Operand::Path(path), _) => check_path(path, scope, arg.line, arg.column, sink),
+        // A text slot is the one position model-written text may fill (§4.2),
+        // and only a CATALOGUED one: a component prop could hand it anywhere.
+        (Operand::Path(path), _) => check_path_at(
+            path,
+            scope,
+            arg.line,
+            arg.column,
+            known.is_some() && catalog::is_text_slot(ctor, &arg.name),
+            sink,
+        ),
         (Operand::Predicate { path, rhs, .. }, _) => {
             check_path(path, scope, arg.line, arg.column, sink);
             // EVERY path in the right operand, not just a bare one. Leaving it
@@ -5708,26 +5987,50 @@ fn check_prop(ctor: &str, arg: &Arg, param: &Param, scope: &Scope, sink: &mut Di
 }
 
 fn check_path(path: &str, scope: &Scope, line: usize, column: usize, sink: &mut Diagnostics) {
+    check_path_at(path, scope, line, column, false, sink);
+}
+
+/// `check_path`, for a position that may be a TEXT SLOT (§4.2).
+///
+/// Model-written text is refused everywhere by default and admitted only where
+/// the caller says the position displays text and does nothing else. Default
+/// deny, so a position added later cannot carry model text by being forgotten:
+/// an action's payload, a source argument, a guard, a key, a control's label
+/// and a component prop all reach `check_path` and are refused here.
+fn check_path_at(
+    path: &str,
+    scope: &Scope,
+    line: usize,
+    column: usize,
+    text_slot: bool,
+    sink: &mut Diagnostics,
+) {
     if path.is_empty() {
         return;
     }
 
-    // `copy.x` where `x` is model-authored. §4's whole point: a model-written
-    // string on screen is indistinguishable from a fact the model invented, so
-    // the class exists to be refused rather than to be recorded.
+    if !text_slot && scope.is_model_text(path) {
+        sink.push(
+            line,
+            column,
+            format!(
+                "{path} is text the model wrote; it may appear only in a text slot ({}) \
+                 and never as an action's payload or target, a source argument, a guard, a \
+                 key, a control's label or a component prop (profile §4.2)",
+                catalog::TEXT_SLOTS
+                    .iter()
+                    .map(|(c, a)| format!("{c}.{a}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+
+    // `copy.x`: declared, with a class. A `model-copy` declaration is checked
+    // above by position, not refused outright: model text is allowed in a text
+    // slot, where the kit marks it AI-written (§4.2).
     if let Some(name) = path.strip_prefix("copy.") {
-        if let Some(decl) = scope.copies.iter().find(|c| c.name == name) {
-            if decl.provenance == Provenance::ModelCopy {
-                sink.push(
-                    line,
-                    column,
-                    format!(
-                        "copy.{name} is `model-copy` and may not be rendered; only \
-                         `vocabulary` and `user-copy` may (profile §4)"
-                    ),
-                );
-            }
-        } else {
+        if !scope.copies.iter().any(|c| c.name == name) {
             sink.push(line, column, format!("copy.{name} is not declared"));
         }
         return;
@@ -5858,6 +6161,28 @@ pub struct UiNode {
     pub exprs: Vec<(String, ExprPart)>,
     /// Host-authenticated origins, retained through props and state.
     pub origins: Vec<(String, ValueOrigin)>,
+}
+
+/// Whether this node shows text the MODEL wrote, which the kit must mark as
+/// AI-written (§4.2).
+///
+/// A `ChatEntry` is marked by its ROLE, which the host gave the message and the
+/// checker ties to the same row as the text: a `model` entry is the agent's
+/// words, a `user` or `host` entry is not. Every other role is marked when a
+/// text slot's value has a model origin — a `model-copy`, a model-written
+/// source field, or a draft state one was written into. Both backends and the
+/// DSL lowering read this, so the three cannot disagree about which text is
+/// the model's.
+pub fn ai_written(node: &UiNode) -> bool {
+    if node.kind == "ChatEntry" {
+        return matches!(
+            node.args.iter().find(|(n, _)| n == "role"),
+            Some((_, NodeValue::Text(role))) if role == "model"
+        );
+    }
+    node.origins.iter().any(|(name, origin)| {
+        *origin == ValueOrigin::Model && catalog::is_text_slot(&node.kind, name)
+    })
 }
 
 /// Where an argument's value came from, with the source's own arguments already
@@ -7212,6 +7537,37 @@ pub mod makepad {
     /// inert: the stock range controls could not reach `dispatch` at all. The
     /// key is what lets a tap name WHICH instance was hit, which is the whole
     /// basis of §5.1 identity.
+    /// The target a text field raises, as a DSL expression over the typed text
+    /// `t`: a routing head serialized here, then `t` encoded at runtime as one
+    /// complete JSON string. Nothing typed can reach the routing keys — the
+    /// same construction `kit::tap_target` uses for a live payload.
+    pub(super) fn typed_target(event: &str, key: &str) -> String {
+        let head = serde_json::json!({ "e": event, "k": key }).to_string();
+        let open = format!("l0:{},\"v\":", head.trim_end_matches('}'));
+        format!("{open:?} + sys.json_string(t) + {:?}", "}")
+    }
+
+    /// ` l0_ai: true` on the widget that draws model-written text (§4.2), as
+    /// `l0_event:` rides on a tappable one. The text itself is emitted exactly
+    /// as any other — a quoted literal, never markup or a target — so this is
+    /// the only difference, and it is the kit's to draw.
+    fn ai_attr(node: &UiNode) -> &'static str {
+        if crate::ai_written(node) {
+            " l0_ai: true"
+        } else {
+            ""
+        }
+    }
+
+    /// Whether a bubble sits on the user's side: `side: .me`, or a chat entry
+    /// the host recorded as the user's.
+    pub(super) fn bubble_is_mine(node: &UiNode) -> bool {
+        match node.kind.as_str() {
+            "ChatEntry" => matches!(arg(node, "role"), Some(NodeValue::Text(r)) if r == "user"),
+            _ => matches!(arg(node, "side"), Some(NodeValue::Token(t)) if t == "me"),
+        }
+    }
+
     fn tap_binding(node: &UiNode) -> String {
         let Some(NodeValue::Event(event)) = arg(node, "on_tap") else {
             return String::new();
@@ -7911,6 +8267,9 @@ pub mod makepad {
             // call could not check `app` against the caller, so there is none
             // and the value is the one the host injected.
             "sys.digest" => None,
+            // The same for a conversation: the host holds it for the publishing
+            // app, runs the agent, and appends both sides (§5.15).
+            "sys.chat" => None,
             "sys.dataset" => {
                 let id = text("id")?;
                 if !crate::catalog::answers("sys.dataset")?.contains(&binding.field.as_str()) {
@@ -9121,8 +9480,8 @@ pub mod makepad {
             "Space" => {
                 let _ = writeln!(out, "{p}View{{ width: Fill height: Fill }}");
             }
-            "Bubble" => {
-                let me = matches!(arg(node, "side"), Some(NodeValue::Token(t)) if t == "me");
+            "Bubble" | "ChatEntry" => {
+                let me = bubble_is_mine(node);
                 let (fill, ink) = if me { (ACTIVE, TEXT) } else { (PANEL, SOFT) };
                 let _ = writeln!(
                     out,
@@ -9137,8 +9496,9 @@ pub mod makepad {
                 );
                 let _ = writeln!(
                     out,
-                    "{p}    TextBody{{ text: {} draw_text.color: {ink} }}",
-                    expr_of(node, "text")
+                    "{p}    TextBody{{ text: {} draw_text.color: {ink}{} }}",
+                    expr_of(node, "text"),
+                    ai_attr(node)
                 );
                 let _ = writeln!(out, "{p}  }}");
                 let _ = writeln!(out, "{p}}}");
@@ -9202,8 +9562,9 @@ pub mod makepad {
                 );
                 let _ = writeln!(
                     out,
-                    "{p}  TextTitle{{ text: {} draw_text.color: {PANEL} }}",
-                    expr_of(node, "text")
+                    "{p}  TextTitle{{ text: {} draw_text.color: {PANEL}{} }}",
+                    expr_of(node, "text"),
+                    ai_attr(node)
                 );
                 let _ = writeln!(out, "{p}}}");
             }
@@ -9402,8 +9763,9 @@ pub mod makepad {
                 };
                 let _ = writeln!(
                     out,
-                    "{p}{role}{{{width} text: {body} draw_text.color: {colour}{size}{} }}",
-                    tap_binding(node)
+                    "{p}{role}{{{width} text: {body} draw_text.color: {colour}{size}{}{} }}",
+                    tap_binding(node),
+                    ai_attr(node)
                 );
             }
             // Content a swipe reveals — hidden until then. See the catalog.
@@ -9427,8 +9789,15 @@ pub mod makepad {
             // `on_return` rather than a tap wrapper. A hit target over a text
             // input eats the focus and there is nothing left to type into, and the
             // payload here is what was TYPED — which does not exist until commit,
-            // so the target is assembled at that moment. `$$` is where the typed
-            // text goes.
+            // so the target is assembled at that moment.
+            //
+            // STRUCTURED, never spliced. This used to emit `head + t + tail`
+            // around a `"$$"` hole, so the typed text landed inside a JSON string
+            // unescaped: typing `","e":"drop","v":"` produced a target whose LAST
+            // `e` key — the one a JSON parser keeps — named another event. Typed
+            // text could redirect the tap. The text is now encoded at runtime
+            // (`sys.json_string`) as one complete JSON value after a routing
+            // head serialized here, so it can only ever be the payload.
             "Field" => {
                 // A field that was not told a width FILLS, unlike a text run.
                 // `Field(width: .fill)` is what every card writes and the row it
@@ -9439,26 +9808,22 @@ pub mod makepad {
                     Some("fit") => " width: Fit",
                     _ => " width: Fill",
                 };
-                let target = match arg(node, "on_commit") {
-                    Some(NodeValue::Event(event)) => {
-                        let json = serde_json::json!({ "e": event, "k": node.key, "v": "$$" });
-                        format!("l0:{json}")
+                let mut commit = String::new();
+                for (property, moment) in [("on_return", "on_commit"), ("on_change", "on_change")] {
+                    if let Some(NodeValue::Event(event)) = arg(node, moment) {
+                        let _ = write!(
+                            commit,
+                            " {property}: |t| agent.notify(\"l0\", {{target: {}}})",
+                            typed_target(event, &node.key)
+                        );
                     }
-                    _ => String::new(),
-                };
-                let (head, tail) = target.split_once("$$").unwrap_or((target.as_str(), ""));
-                let commit = if target.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        " on_return: |t| agent.notify(\"l0\", {{target: {head:?} + t + {tail:?}}})"
-                    )
-                };
+                }
                 let _ = writeln!(
                     out,
-                    "{p}TextInput{{{width} height: 48 text: {} empty_text: {}{commit} }}",
+                    "{p}TextInput{{{width} height: 48 text: {} empty_text: {}{commit}{} }}",
                     expr_of(node, "text"),
                     expr_of(node, "placeholder"),
+                    ai_attr(node),
                 );
             }
             other => {
@@ -10118,7 +10483,19 @@ fn dispatch_writes(
                 // A path READS. Treating it as the payload meant
                 // `n: set(config.answer)` wrote whatever the tap carried — or
                 // nothing at all when it carried nothing.
-                SetSource::Path(p) => match data_path(data, p) {
+                // `copy.x` is the card's own text and is not in the data blob;
+                // it resolves from the declaration, in the device's language,
+                // exactly as realization renders it.
+                SetSource::Path(p) => match if p.starts_with("copy.") {
+                    ValueScope {
+                        frames: Vec::new(),
+                        data,
+                        copies: &card.copies,
+                    }
+                    .lookup(p)
+                } else {
+                    data_path(data, p)
+                } {
                     Some(v) if value_fits_shape(&state.shape, &v) => v,
                     // Unresolvable or ill-shaped: the batch cannot complete, and
                     // §3 says a batch is all or nothing.
@@ -11159,7 +11536,7 @@ fn dsl_kind(role: &str) -> Option<&'static str> {
         "Rule" => "divider",
         "Space" => "column",
         "Band" => "card",
-        "Bubble" => "card",
+        "Bubble" | "ChatEntry" => "card",
         "Fab" => "card",
         "TabBar" => "row",
         "Tab" => "column",
@@ -11214,6 +11591,10 @@ fn emit_dsl(node: &UiNode, depth: usize, out: &mut String, sink: &mut Vec<Syntax
             NodeValue::Token(t) => write!(out, ", {attr}: {t:?}"),
             _ => Ok(()),
         };
+    }
+    // The AI-written mark (§4.2). The consumer's `Attrs` must read `ai`.
+    if crate::ai_written(node) {
+        out.push_str(", ai: 1");
     }
 
     if node.children.is_empty() {
@@ -11287,7 +11668,7 @@ pub mod kit {
             "Rule" => "l0_rule",
             "Space" => "l0_space",
             "Band" => "l0_band",
-            "Bubble" => "l0_bubble_them",
+            "Bubble" | "ChatEntry" => "l0_bubble_them",
             "Fab" => "l0_fab",
             "TabBar" => "l0_tabbar",
             "Tab" => "l0_tab",
@@ -11525,6 +11906,13 @@ pub mod kit {
     /// tokens pass the TOKEN and not a pixel count: how wide a rank column is
     /// is the theme's answer, and deciding here would put styling in the
     /// lowering.
+    /// `l0_ai_text(node)`: the kit marks a node whose text the model wrote
+    /// (§4.2). Like `l0_live` it only stamps the node — `node.ai = 1` — and the
+    /// renderer decides what AI-written looks like.
+    fn ai_wrap(node: &UiNode) -> Option<(&'static str, String)> {
+        crate::ai_written(node).then(|| ("l0_ai_text(", ")".to_owned()))
+    }
+
     fn width_wrap(node: &UiNode) -> Option<(&'static str, String)> {
         let t = token_arg(node, "width")?;
         match t {
@@ -11598,6 +11986,10 @@ pub mod kit {
         // tap: a hit target over a text input eats the focus, and the payload
         // here is what was typed rather than what the row was bound to.
         if node.kind == "Field" {
+            let ai = super::ai_written(node);
+            if ai {
+                out.push_str("l0_ai_text(");
+            }
             let _ = write!(
                 out,
                 "l0_field({}, {}, {:?}, {:?})",
@@ -11606,6 +11998,9 @@ pub mod kit {
                 commit_target(node).unwrap_or_default(),
                 field_target(node, "on_change").unwrap_or_default()
             );
+            if ai {
+                out.push(')');
+            }
             return;
         }
         // A tappable node is WRAPPED. A `card`, `chip` or `image` carrying
@@ -11681,6 +12076,8 @@ pub mod kit {
             live_call_of(node).map(|call| ("l0_live(", format!(", {call:?})"))),
             width_wrap(node),
             align_wrap(node),
+            // INNERMOST, so the mark lands on the text node itself (§4.2).
+            ai_wrap(node),
         ]
         .into_iter()
         .flatten()
@@ -11967,8 +12364,8 @@ pub mod kit {
                 children(node, depth, out);
                 out.push(')');
             }
-            "Bubble" => {
-                let me = matches!(arg(node, "side"), Some(NodeValue::Token(t)) if t == "me");
+            "Bubble" | "ChatEntry" => {
+                let me = makepad::bubble_is_mine(node);
                 // A literal longer than a line gets the capped wrapping form;
                 // an unmeasurable live value is assumed long, which only costs
                 // a short message some air.

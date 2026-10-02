@@ -13,6 +13,11 @@ pub enum ValueOrigin {
     UserInput,
     Host,
     Derived,
+    /// Text the MODEL wrote: a `model-copy` declaration, a model-written field
+    /// of a host source (`sys.digest`'s summary, a `sys.chat` entry's text), or
+    /// a state one of those was written into. Renderable in a text slot, with
+    /// the AI-written mark; never data, never an action's input (profile §4.2).
+    Model,
     Unknown,
 }
 
@@ -27,6 +32,10 @@ impl ValueOrigin {
     fn combine(self, other: Self) -> Self {
         if self == Self::Unknown || other == Self::Unknown {
             Self::Unknown
+        } else if self == Self::Model || other == Self::Model {
+            // Model text does not wash out by being combined with something
+            // trustworthy: the result still carries words the model chose.
+            Self::Model
         } else if self == other {
             self
         } else if self.permits_data() || other.permits_data() {
@@ -40,6 +49,16 @@ impl ValueOrigin {
 impl ValueScope<'_> {
     pub(super) fn path_origin(&self, path: &str, card: &Card) -> ValueOrigin {
         let root = path.split('.').next().unwrap_or(path);
+        // Model-written FIELDS of a host source, through any loop over it. Asked
+        // first, because a loop binder's own origin is its collection's (Source)
+        // and would otherwise answer for `p.text` before the field is looked at.
+        if path.contains('.')
+            && self.source_helper_of(path, card).is_some_and(|helper| {
+                catalog::is_model_text(helper, path.rsplit('.').next().unwrap_or(path))
+            })
+        {
+            return ValueOrigin::Model;
+        }
         if let Some((_, _, _, _, origin)) = self.frames.iter().rev().find(|(n, ..)| n == root) {
             return *origin;
         }
@@ -51,6 +70,7 @@ impl ValueScope<'_> {
                 .map(|c| c.provenance)
             {
                 Some(Provenance::Vocabulary) => ValueOrigin::Vocabulary,
+                Some(Provenance::ModelCopy) => ValueOrigin::Model,
                 // Copy class is authored metadata, not evidence of a native input.
                 _ => ValueOrigin::Authored,
             };
@@ -64,6 +84,27 @@ impl ValueScope<'_> {
         } else {
             ValueOrigin::Unknown
         }
+    }
+
+    /// The capability behind a path, through any loop binders between them:
+    /// `p.text` inside `for p in brief.points` answers `sys.digest`. A binder
+    /// that is not a loop item (a component prop) answers nothing.
+    fn source_helper_of<'c>(&self, path: &str, card: &'c Card) -> Option<&'c str> {
+        let mut path = path.to_string();
+        // Bounded by the frame count: each hop moves to an enclosing loop.
+        for _ in 0..=self.frames.len() {
+            let root = path.split('.').next().unwrap_or(&path).to_string();
+            if let Some((_, _, item, _, _)) = self.frames.iter().rev().find(|(n, ..)| *n == root) {
+                path = item.as_ref()?.0.clone();
+                continue;
+            }
+            return card
+                .sources
+                .iter()
+                .find(|s| path == s.name || path.starts_with(&format!("{}.", s.name)))
+                .map(|s| s.helper.as_str());
+        }
+        None
     }
 
     pub(super) fn operand_origin(&self, operand: &Operand, card: &Card) -> ValueOrigin {

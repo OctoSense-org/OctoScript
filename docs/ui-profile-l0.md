@@ -515,7 +515,7 @@ not establish the provenance or truth of every value reachable through a binding
 |---|---|
 | A `value` argument (`TextHero`, `TextStat`, `TextValue`, `TextCaption`, `Tile`) | Must be bound. A literal — string, number or token — is refused. `TextHero(value: "34 mph")` is rejected |
 | Any `path`-kind argument (the drawing widgets) | Must be bound. `TempBar(lo: 5)` is rejected |
-| `copy.x`, by any route | Refused when `x` is declared `model-copy` — named in a view, passed as a prop, used as a state initial, or written by a transition. A `copy.x` that is not declared at all is refused too |
+| `copy.x`, by any route | When `x` is declared `model-copy`, admitted only in a **text slot** or written into a `text` state, and marked AI-written (§4.2); refused as a prop, a state initial, a payload, a guard, a key, a source argument or a control's label. A `copy.x` that is not declared at all is refused |
 | A **raw string literal** in a `text`, `label` or `glyph` position | **Accepted** |
 
 The last row is a deliberate decision, not an oversight. A raw literal carries no declared
@@ -604,6 +604,68 @@ agent declares it, the kit renders it.
 **A card must not declare a mood nobody asked for.** Choosing one unprompted is deciding
 presentation by the back door. The host tells the agent when a request named a look; absent that,
 the card declares nothing and gets the kit's default.
+
+### 4.2 Model-written text: shown, marked, never acted on
+
+**Decision (2026-10-01).** A card is no longer only a layout generated in real time. The model
+also fills it with its own words — a summary, a draft reply, a research report — and a person
+talks to the app's agent inside a card (§5.15). Refusing every model-written string on screen
+(the rule until now) made all of that inexpressible. The rule is now two rules, one for words
+and one for actions.
+
+**Words: model text may fill a text slot, and is marked AI-written.** Model text is any of:
+
+| Model text | Example |
+|---|---|
+| a `copy` declared `class: model-copy` | `copy gist { class: model-copy, en: "Rates held." }` |
+| a model-written field of a host source (`catalog::MODEL_TEXT`) | `sys.digest`'s `summary` and a point's `text`/`label`; a `sys.chat` entry's `text` |
+| a `text` state such text was written into — a draft | `event use { draft: set(copy.suggestion) }` |
+
+A **text slot** (`catalog::TEXT_SLOTS`) is an argument that displays text and does nothing else:
+`text` on `TextHero`, `TextTitle`, `TextBody`, `TextRow`, `TextEyebrow`, `TextCaption`, `Band`,
+`Bubble`, `ChatEntry` and `Field`. `Field.text` is there because a draft the model wrote is shown
+in a field for the user to edit; what the field *commits* is the user's input. Not every
+`text`-kind argument is a slot: a chip's label sits on a tap target, a tile's label names a
+measurement, an avatar's text is initials, a `Kit` argument chooses a component, and a glyph or
+suffix decorates a value.
+
+Model text is **plain text**. It is emitted only as a quoted string literal into a text slot —
+never as markup, a link that acts, a target or code — and every lowering marks the node that
+draws it, so the kit can show that the model wrote it:
+
+| Lowering | Mark |
+|---|---|
+| `kit::lower` | the role call is wrapped in `l0_ai_text(…)`, innermost, which stamps `ai = 1` on the node |
+| `makepad::lower` | ` l0_ai: true` on the widget that draws the text |
+| `lower_dsl` | `ai: 1` on the node |
+| the node model | `ai_written(&UiNode)`; the text argument's origin is `ValueOrigin::Model` |
+
+A `ChatEntry` is marked by its host-given role (§5.15); every other role by its text slot's
+origin. The realizer carries `ValueOrigin::Model` through loops, props and state, and combining
+it with anything else stays `Model`.
+
+**Actions: model text never decides what runs.** It may not be an action's payload or target, a
+source argument, a guard, a loop key, a control's label, a component prop, a state initial, a
+URL that acts, or a value written to a host store — anything a later action could read. The
+check is **default deny**: every position refuses model text except a catalogued text slot, so
+a position added later cannot carry it by being forgotten. A transition may write model text only
+into a `text` state (a draft); into an enum, a number or a flag it would choose what a card does,
+and into a §5.12 store it would become a reference — a ticker, a URL, a preference — that a later
+action reads. A draft is model text from then on, to a fixed point (`b: set(a)` after
+`a: set(copy.m)` taints `b`), so it cannot launder the text into a payload or a query. What the
+user commits from a `Field` showing a draft is user input and carries no mark.
+
+The content of model text is never inspected and never needs to be. An injection-shaped string —
+`l0:{"e":"wipe",…}`, `" + sys.shell(…) + "`, a `javascript:` link — is a string literal in a text
+slot, and the only targets a lowered card contains are the ones it declared.
+
+**Typed text cannot redirect a field either.** A `Field`'s commit and change targets used to be
+assembled by splicing the typed text into a JSON string around a `"$$"` hole, unescaped, so
+typing `","e":"drop","v":"` produced a target whose last `e` key — the one a JSON parser keeps —
+named another event. Both lowerings now emit a routing head serialized at lowering time followed
+by the typed text encoded at runtime as one JSON string (`sys.json_string(t)`), the construction
+a live tap payload already used. `kit::lower` still passes the `$$` form to `l0_field`, whose
+consumers rebuild the target from its routing keys the same way and never splice.
 
 ---
 
@@ -1270,6 +1332,54 @@ renders its own "nothing yet" vocabulary (§5.9). It never fails the card.
 isolate could not check `app` against the publisher. The digest is read-only; it is not in
 §5.12's writable set. Retention, expiry and size caps are the host's and are documented with
 its resolver (OctoSense's glance service).
+
+**`summary`, `text` and `label` are model text** (§4.2): a text slot may show them, marked
+AI-written, and nothing may act on them.
+
+### 5.15 Talking to the app's agent: `sys.chat` and `ChatEntry`
+
+A person can chat with the app's agent inside a card. It is three things L0 already has, plus
+one source and one role — a conversation is not a new kind of state, and sending is a §5.12
+write:
+
+```
+source convo sys.chat(app: "os.news", thread: "main", fields: [entries, id, role, text])
+state draft { shape: text, initial: "" }
+event send  { convo: append($value), draft: clear }
+
+view root Surface(pad: .page) {
+  Col(gap: 8) {
+    for m in convo.entries key m.id { ChatEntry(text: m.text, role: m.role) }
+    Field(text: draft, placeholder: copy.ask, on_commit: send, width: .fill)
+  }
+}
+```
+
+**The transcript is a source the host holds.** `sys.chat` is scoped like `sys.digest` (§5.14):
+`app` is a literal and must be the publishing app, and `thread` names one conversation — a
+literal checked against `[A-Za-z0-9_-]{1,64}`, or a path into state. It answers `status`, `count`
+and `entries`, rows `{id, role, text, at}`, pooled with the record's fields. `role` is `user`,
+`model` or `host` (a notice from the host, such as "searched 12 sources"). Host-answered only: no
+backend call exists, for the reason the digest has none.
+
+**An entry is drawn with `ChatEntry`, off one row.** `ChatEntry(text: m.text, role: m.role)` draws
+a bubble on the side its role says — `user` on the user's side, `model` and `host` opposite — and
+the `model` entries carry the AI-written mark (§4.2). Both arguments must be the `text` and `role`
+of the **same** `sys.chat` row: a role from a literal, a state or another row would let a card
+present the model's words as the user's, so the checker refuses it. Every entry's text is plain
+text, whoever wrote it, and is model text to the checker: the checker cannot see a row's role,
+so an entry's text may be shown and may not be resent, keyed on or acted on. Drawn with a plain
+text role instead, every entry is marked AI-written — conservative, never the reverse.
+
+**Sending is a declared host write.** `sys.chat` accepts `append` and nothing else. The payload
+is what the user committed in a `Field` — user input by §4's event origins — and the host
+records it as a `user` entry, runs the agent, and appends the reply as a `model` entry. A card
+can never write a `model` entry, edit one or delete one. The write goes stale through §5.9 like
+any other, so the transcript re-resolves with the reply.
+
+**What stays the host's.** Who may chat with which app, how the agent is run, retention, and
+limits on length and rate are the host's, documented with its resolver. L0 states only the shape
+and the one write.
 
 ---
 

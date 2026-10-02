@@ -176,6 +176,16 @@ text = { kind = "text" }
 text = { kind = "text" }
 side = { kind = "token" }
 
+# One entry of an in-card chat (profile §5.15): a `sys.chat` row drawn as a
+# bubble on the side its role says. Both arguments read the SAME row —
+# `ChatEntry(text: m.text, role: m.role)` inside `for m in convo.entries` — so
+# the role the host gave a message always labels that message. `role` is
+# `user` (the user's side), `model` (the app's agent: the kit marks it
+# AI-written) or `host` (a notice from the host). Text is plain, never markup.
+[ChatEntry]
+text = { kind = "text" }
+role = { kind = "path" }
+
 # The floating round action button, pinned over the page corner.
 [Fab]
 name = { kind = "token" }
@@ -562,10 +572,34 @@ answers = ["title", "subtitle", "summary", "coverage", "status", "as_of", "metri
 # `cite` is the same as 1-based text ("1, 3") for a card to show. `sources` rows
 # are `{id, n, title, source, url, published_at}`. Model text carries no URLs;
 # a link comes only from `sources[].url`. Host-answered only: no backend call.
+#
+# `summary` and a point's `text` and `label` are MODEL TEXT (§4.2): a text slot
+# may show them, marked AI-written, and nothing may act on them.
 args = ["app", "id", "fields"]
 # The row fields are pooled with the record's, as `sys.weather`'s days are: a
 # loop over `d.points` reads only what `fields:` asked for.
 answers = ["status", "topic", "language", "summary", "retrieved_at", "count", "points", "sources", "id", "text", "label", "cite", "citations", "n", "title", "source", "url", "published_at"]
+
+[sources."sys.chat"]
+# A conversation the HOST holds for the card's own app (profile §5.15): the
+# transcript between the user and the app's agent, and the one way to talk to
+# it from inside a card.
+#
+# Scoped like `sys.digest`: `app` is a literal app id and must be the app that
+# published the card, and `thread` names one conversation — a literal checked
+# against `[A-Za-z0-9_-]{1,64}`, or a path into state.
+#
+# `entries` rows are `{id, role, text, at}`. `role` is `user`, `model` or
+# `host`; `text` is plain text whoever wrote it, and is MODEL TEXT to the
+# checker (§4.2): a text slot may show it, and nothing may act on it. Draw a
+# transcript with `ChatEntry`, which marks the model's entries AI-written.
+#
+# `append` is the one write: the payload is what the user committed in a
+# `Field`, recorded as a `user` entry. The host runs the agent and appends its
+# reply as a `model` entry; a card can never write one. Host-answered only.
+args = ["app", "thread", "fields"]
+answers = ["status", "count", "entries", "id", "role", "text", "at"]
+writes = ["append"]
 
 [sources."sys.movers"]
 # `symbols` names the universe to rank; omitted means the whole market. Without
