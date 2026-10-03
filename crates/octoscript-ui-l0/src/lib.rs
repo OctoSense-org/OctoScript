@@ -3052,6 +3052,8 @@ fn collect_constructors(e: &Element, out: &mut Vec<String>) {
 /// The argument contract. Mirrors `docs/ui-l0-constructors.toml`, which is the
 /// human-readable spec; a test asserts the two agree.
 pub mod catalog {
+    use std::sync::{OnceLock, RwLock};
+
     /// The themes a card may declare, as MOODS rather than looks.
     ///
     /// Closed, and closed for the same reason the role list is: a theme name is
@@ -3785,7 +3787,21 @@ pub mod catalog {
     ];
 
     pub fn source(name: &str) -> Option<&'static [&'static str]> {
-        SOURCES.iter().find(|(n, _)| *n == name).map(|(_, a)| *a)
+        if let Some((_, fields)) = SOURCES.iter().find(|(n, _)| *n == name) {
+            return Some(*fields);
+        }
+        if let Some(table) = REGISTERED.get() {
+            if let Ok(guard) = table.read() {
+                if guard.iter().any(|c| c.name == name) {
+                    // Host-registered helpers always accept the `fields:`
+                    // argument; the per-helper field vocabulary lives in
+                    // [`answers`]. Other arguments would need explicit
+                    // registration support.
+                    return Some(&["fields"]);
+                }
+            }
+        }
+        None
     }
 
     /// What each capability can ANSWER: the field names a card may request from
@@ -4091,7 +4107,17 @@ pub mod catalog {
     }
 
     pub fn answers(name: &str) -> Option<&'static [&'static str]> {
-        ANSWERS.iter().find(|(n, _)| *n == name).map(|(_, a)| *a)
+        if let Some((_, fields)) = ANSWERS.iter().find(|(n, _)| *n == name) {
+            return Some(*fields);
+        }
+        if let Some(table) = REGISTERED.get() {
+            if let Ok(guard) = table.read() {
+                if let Some(c) = guard.iter().find(|c| c.name == name) {
+                    return Some(c.fields);
+                }
+            }
+        }
+        None
     }
 
     pub fn aggregates(name: &str) -> &'static [&'static str] {
@@ -4099,6 +4125,87 @@ pub mod catalog {
             .iter()
             .find(|(n, _)| *n == name)
             .map_or(&[], |(_, a)| *a)
+    }
+
+    /// Runtime catalog entry for a host-registered `sys.<name>` helper.
+    ///
+    /// Mirrors the (name, fields) shape of the build-time [`ANSWERS`] table,
+    /// but is supplied at runtime by a host that owns the matching adapter.
+    /// `unsafe_code = "forbid"` means the `Box::leak` below is the safe API,
+    /// not a raw pointer.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct SysContract {
+        pub name: String,
+        pub fields: &'static [&'static str],
+        pub schema: Option<String>,
+    }
+
+    static REGISTERED: OnceLock<RwLock<Vec<&'static SysContract>>> = OnceLock::new();
+
+    fn registered_table() -> &'static RwLock<Vec<&'static SysContract>> {
+        REGISTERED.get_or_init(|| RwLock::new(Vec::new()))
+    }
+
+    /// Register a host-side `sys.*` helper at runtime.
+    ///
+    /// Returns `Err` if `name` does not start with `sys.`, collides with any
+    /// build-time catalog entry, or has already been registered. Boot-time
+    /// callers should `?` on the result.
+    pub fn register(contract: SysContract) -> Result<&'static SysContract, String> {
+        if !contract.name.starts_with("sys.") {
+            return Err(format!("name {:?} must start with \"sys.\"", contract.name));
+        }
+        if AGGREGATES.iter().any(|(n, _)| *n == contract.name) {
+            return Err(format!(
+                "name {:?} collides with build-time AGGREGATES",
+                contract.name
+            ));
+        }
+        if MUTABLE.iter().any(|(n, _)| *n == contract.name) {
+            return Err(format!(
+                "name {:?} collides with build-time MUTABLE",
+                contract.name
+            ));
+        }
+        if ANSWERS.iter().any(|(n, _)| *n == contract.name) {
+            return Err(format!(
+                "name {:?} collides with build-time ANSWERS",
+                contract.name
+            ));
+        }
+        let table = registered_table();
+        {
+            let guard = table
+                .read()
+                .map_err(|e| format!("catalog lock poisoned: {e}"))?;
+            if guard.iter().any(|c| c.name == contract.name) {
+                return Err(format!("name {:?} is already registered", contract.name));
+            }
+        }
+        let leaked: &'static SysContract = Box::leak(Box::new(contract));
+        let mut guard = table
+            .write()
+            .map_err(|e| format!("catalog lock poisoned: {e}"))?;
+        guard.push(leaked);
+        Ok(leaked)
+    }
+
+    /// All runtime-registered helper names. The build-time catalog is not listed.
+    pub fn registered_names() -> Vec<String> {
+        registered_table()
+            .read()
+            .map(|g| g.iter().map(|c| c.name.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Drop every runtime-registered helper. Test-only; hosts should register
+    /// once at boot and never touch this.
+    pub fn clear_registered_for_tests() {
+        if let Some(table) = REGISTERED.get() {
+            if let Ok(mut g) = table.write() {
+                g.clear();
+            }
+        }
     }
 }
 
@@ -4788,13 +4895,15 @@ fn validate_sources(card: &Card, sink: &mut Diagnostics) {
     for source in &card.sources {
         let Some(accepted) = catalog::source(&source.helper) else {
             let mut known: Vec<&str> = catalog::SOURCES.iter().map(|(n, _)| *n).collect();
+            let registered = catalog::registered_names();
+            known.extend(registered.iter().map(String::as_str));
             known.sort();
             sink.push(
                 source.line,
                 1,
                 format!(
                     "{:?} is not a source capability L0 admits; a card may only name a \
-                     catalogued helper (profile §4). Known: {}",
+                     catalogued helper (profile §4 §4.2). Known: {}",
                     source.helper,
                     known.join(", ")
                 ),
