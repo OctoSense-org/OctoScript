@@ -129,6 +129,10 @@ jobs:
           RUSTFLAGS='--cfg fuzzing' cargo +nightly fuzz run --sanitizer none json_line_worker --
           -runs=128 -max_len=1048578
         working-directory: fuzz
+      - run: >
+          RUSTFLAGS='--cfg fuzzing' cargo +nightly fuzz run --sanitizer none catalog_register --
+          -runs=128 -max_len=1024
+        working-directory: fuzz
 
   fuzz-memory-safety:
     runs-on: ubuntu-latest
@@ -191,6 +195,11 @@ jobs:
           RUSTFLAGS='--cfg fuzzing' cargo +nightly fuzz run capability_lease --
           -runs=128 -max_len=8192
         working-directory: fuzz
+      - name: AddressSanitizer catalog register fuzzing
+        run: >
+          RUSTFLAGS='--cfg fuzzing' cargo +nightly fuzz run catalog_register --
+          -runs=128 -max_len=1024
+        working-directory: fuzz
 
   miri-vm-regression:
     runs-on: ubuntu-latest
@@ -204,3 +213,8 @@ jobs:
         run: >
           cargo +nightly miri test -p makepad-script
           reentrant_reload_of_the_active_body_does_not_keep_an_opcode_pointer
+      # catalog_register — layered catalog register under Miri (profile §4.2)
+      - name: Check layered catalog register under Miri
+        run: >
+          cargo +nightly miri test -p octoscript-ui-l0
+          register_and_concurrent_lookup_no_ub_under_miri

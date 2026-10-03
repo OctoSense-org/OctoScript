@@ -22,6 +22,7 @@ octoscript-protocol = { version = "0.1.0", path = "../crates/octoscript-protocol
 octoscript-sandbox = { version = "0.1.0", path = "../crates/octoscript-sandbox" }
 octoscript-schema = { version = "0.1.0", path = "../crates/octoscript-schema", features = ["exact-numbers"] }
 octoscript-storage = { version = "0.1.0", path = "../crates/octoscript-storage" }
+octoscript-ui-l0 = { version = "0.1.0", path = "../crates/octoscript-ui-l0" }
 octoscript-worker = { version = "0.1.0", path = "../crates/octoscript-worker" }
 octoscript-workflow = { version = "0.1.0", path = "../crates/octoscript-workflow" }
 
@@ -139,5 +140,11 @@ doc = false
 [[bin]]
 name = "rollback_anchor_service"
 path = "fuzz_targets/rollback_anchor_service.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "catalog_register"
+path = "fuzz_targets/catalog_register.rs"
 test = false
 doc = false

@@ -50,3 +50,9 @@
 /fuzz/target/
 *.swp
 .DS_Store
+
+# Local coordination docs (not for upstream)
+/.todo-*.md
+/.todo-*/
+**/.todo-*.md
+**/.todo-*/
