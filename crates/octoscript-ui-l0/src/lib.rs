@@ -3668,7 +3668,10 @@ pub mod catalog {
         ("sys.chat", &["text"]),
         // Draft content may originate from an agent. Display/edit is allowed;
         // using it as an action payload or source selector is not.
-        ("sys.mail_draft", &["to", "subject", "body", "suggestion_body"]),
+        (
+            "sys.mail_draft",
+            &["to", "subject", "body", "suggestion_body"],
+        ),
     ];
 
     pub fn is_model_text(helper: &str, field: &str) -> bool {
@@ -3819,8 +3822,16 @@ pub mod catalog {
         (
             "sys.mail_draft",
             &[
-                "draft_id", "revision", "to", "subject", "body", "status",
-                "chat_thread", "ai_written", "suggestion_id", "suggestion_body",
+                "draft_id",
+                "revision",
+                "to",
+                "subject",
+                "body",
+                "status",
+                "chat_thread",
+                "ai_written",
+                "suggestion_id",
+                "suggestion_body",
             ],
         ),
         (
@@ -4410,7 +4421,8 @@ fn check_event_batch(
                             transition.line,
                             transition.column,
                             "a written sys.mail_draft source must declare exactly one editable \
-                             field: to, subject or body (profile §5.16)".to_string(),
+                             field: to, subject or body (profile §5.16)"
+                                .to_string(),
                         );
                     }
                 }
@@ -4929,11 +4941,9 @@ fn validate_sources(card: &Card, sink: &mut Diagnostics) {
                 ("id", "digest id", "which of the app's digests"),
                 sink,
             ),
-            "sys.mail_draft" | "sys.mail_review" => check_app_scoped_source(
-                source,
-                ("id", "draft id", "which host-issued draft"),
-                sink,
-            ),
+            "sys.mail_draft" | "sys.mail_review" => {
+                check_app_scoped_source(source, ("id", "draft id", "which host-issued draft"), sink)
+            }
             "sys.chat" => check_app_scoped_source(
                 source,
                 ("thread", "thread id", "which of the app's conversations"),
