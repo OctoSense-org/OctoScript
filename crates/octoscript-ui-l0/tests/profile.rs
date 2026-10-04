@@ -7136,7 +7136,7 @@ fn every_offered_field_has_a_translation() {
     // missing. `sys.digest` reads a file the host holds for the PUBLISHING app,
     // and no call made from the card could check which app that is. Checked
     // below to have no translation at all, so the list cannot hide a gap.
-    const HOST_ONLY: &[&str] = &["sys.digest", "sys.chat"];
+    const HOST_ONLY: &[&str] = &["sys.digest", "sys.chat", "sys.mail_draft", "sys.mail_review"];
 
     let mut missing: Vec<(String, String)> = Vec::new();
     for (capability, fields) in catalog::ANSWERS {

@@ -580,6 +580,22 @@ args = ["app", "id", "fields"]
 # loop over `d.points` reads only what `fields:` asked for.
 answers = ["status", "topic", "language", "summary", "retrieved_at", "count", "points", "sources", "id", "text", "label", "cite", "citations", "n", "title", "source", "url", "published_at"]
 
+[sources."sys.mail_draft"]
+# Host-bound Mail draft (profile §5.16). Same app/id checks as sys.digest.
+# A written source declares exactly one of to/subject/body; the host accepts
+# only actual Field UserInput, checks the bound account/revision, and persists.
+# These content fields plus suggestion_body remain model text to the checker.
+args = ["app", "id", "fields"]
+answers = ["draft_id", "revision", "to", "subject", "body", "status", "chat_thread", "ai_written", "suggestion_id", "suggestion_body"]
+writes = ["set"]
+
+[sources."sys.mail_review"]
+# Host-bound review request, not approval or a transport call. Set requests
+# review of the bound draft; clear cancels review before a send is claimed.
+args = ["app", "id", "fields"]
+answers = ["status", "operation_id", "draft_id", "revision"]
+writes = ["set", "clear"]
+
 [sources."sys.chat"]
 # A conversation the HOST holds for the card's own app (profile §5.15): the
 # transcript between the user and the app's agent, and the one way to talk to

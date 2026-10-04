@@ -618,7 +618,7 @@ and one for actions.
 | Model text | Example |
 |---|---|
 | a `copy` declared `class: model-copy` | `copy gist { class: model-copy, en: "Rates held." }` |
-| a model-written field of a host source (`catalog::MODEL_TEXT`) | `sys.digest`'s `summary` and a point's `text`/`label`; a `sys.chat` entry's `text` |
+| a model-written field of a host source (`catalog::MODEL_TEXT`) | `sys.digest`'s `summary` and a point's `text`/`label`; a `sys.chat` entry's `text`; `sys.mail_draft`'s `to`, `subject`, `body` and `suggestion_body` |
 | a `text` state such text was written into — a draft | `event use { draft: set(copy.suggestion) }` |
 
 A **text slot** (`catalog::TEXT_SLOTS`) is an argument that displays text and does nothing else:
@@ -1380,6 +1380,55 @@ any other, so the transcript re-resolves with the reply.
 **What stays the host's.** Who may chat with which app, how the agent is run, retention, and
 limits on length and rate are the host's, documented with its resolver. L0 states only the shape
 and the one write.
+
+### 5.16 Editing a host-bound Mail draft and requesting review
+
+`sys.mail_draft(app, id, fields)` and `sys.mail_review(app, id, fields)` use the
+existing source and event grammar. They describe host capabilities, not a new
+constructor, a transport call or permission to send mail. A host must implement
+and admit their handlers before a card can use them; catalog admission alone
+is not an implementation of the composed Mail experience.
+
+Both sources use §5.14's identity checks: `app` is a literal publishing-app ID;
+`id` is a literal matching `[A-Za-z0-9_-]{1,64}` or a path. Here it names a
+**host-issued draft ID**. On every read and write, the host resolves that ID
+against the card's trusted publisher/account/draft binding. Card data cannot
+retarget the account or manufacture that binding. Neither source lowers to a
+backend call from the isolate.
+
+| Source | Answer fields | Writes |
+|---|---|---|
+| `sys.mail_draft` | `draft_id`, `revision`, `to`, `subject`, `body`, `status`, `chat_thread`, `ai_written`, `suggestion_id`, `suggestion_body` | `set` only |
+| `sys.mail_review` | `status`, `operation_id`, `draft_id`, `revision` | `set`, `clear` only |
+
+A read-only draft source may ask for several fields. A **written** draft source
+must declare exactly one of `to`, `subject` or `body`; that field is the write
+key, as with `sys.prefs`. The host accepts only actual `Field` UserInput and
+checks the displayed revision before durably saving. An editor can bind the
+source directly:
+
+```
+source draft sys.mail_draft(app: "os.mail", id: "draft-1", fields: [body])
+event save { draft: set($value) }
+view root Field(text: draft.body, on_change: save)
+```
+
+This is a checked contract example; `draft-1` does not create a draft. The host
+supplies its record and binding. `to`, `subject`, `body` and `suggestion_body`
+are conservatively **model text** (§4.2), since an agent may have proposed them.
+They may be displayed, including in `Field.text`; the Field's committed input
+has UserInput origin. Reading those fields directly into a write, action
+payload or source selector remains forbidden. The host retains the actual
+AI-written provenance; accepting a draft is not send approval.
+
+Setting `sys.mail_review` requests host review of the **bound draft**. The
+payload is not an account selector, an arbitrary message snapshot or consent.
+Clearing it cancels pending review before the send is claimed; it cannot recall
+an SMTP submission. Only the host's distinct review UI may authorize execution
+of the exact stored snapshot. Generated chips, model text and injected input
+cannot mint that authority. Draft revision checks, trusted-input provenance,
+authorization, durable sending and uncertain outcomes remain the host's
+responsibility; this catalog extension performs none of them.
 
 ---
 
