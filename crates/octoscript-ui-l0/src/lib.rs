@@ -3666,6 +3666,12 @@ pub mod catalog {
     pub const MODEL_TEXT: &[(&str, &[&str])] = &[
         ("sys.digest", &["summary", "text", "label"]),
         ("sys.chat", &["text"]),
+        // Draft content may originate from an agent. Display/edit is allowed;
+        // using it as an action payload or source selector is not.
+        (
+            "sys.mail_draft",
+            &["to", "subject", "body", "suggestion_body"],
+        ),
     ];
 
     pub fn is_model_text(helper: &str, field: &str) -> bool {
@@ -3744,6 +3750,9 @@ pub mod catalog {
         // `app` must be the publishing app, which only the host knows, so the
         // host refuses any other; `id` names one stored run.
         ("sys.digest", &["app", "id", "fields"]),
+        // Host-issued draft bindings; neither source grants SMTP authority.
+        ("sys.mail_draft", &["app", "id", "fields"]),
+        ("sys.mail_review", &["app", "id", "fields"]),
         // A conversation the HOST holds for the card's own app (§5.15): the
         // transcript between the user and the app's agent. Same scoping as
         // `sys.digest` — `app` is the publisher, `thread` one conversation.
@@ -3810,6 +3819,25 @@ pub mod catalog {
     /// test per backend asserting it answers everything declared here. This
     /// table is what such a test would check against; it is not the test.
     pub const ANSWERS: &[(&str, &[&str])] = &[
+        (
+            "sys.mail_draft",
+            &[
+                "draft_id",
+                "revision",
+                "to",
+                "subject",
+                "body",
+                "status",
+                "chat_thread",
+                "ai_written",
+                "suggestion_id",
+                "suggestion_body",
+            ],
+        ),
+        (
+            "sys.mail_review",
+            &["status", "operation_id", "draft_id", "revision"],
+        ),
         (
             "sys.geocode",
             &[
@@ -4084,6 +4112,9 @@ pub mod catalog {
         // `Field`, appended as a `user` entry. The host runs the agent and
         // appends its reply; a card cannot write a `model` entry.
         ("sys.chat", &["append"]),
+        ("sys.mail_draft", &["set"]),
+        // Requests/cancels host review; never authorizes sending.
+        ("sys.mail_review", &["set", "clear"]),
     ];
 
     pub fn mutable(name: &str) -> Option<&'static [&'static str]> {
@@ -4375,6 +4406,25 @@ fn check_event_batch(
                         ),
                     ),
                     Some(_) => {}
+                }
+                if source.helper == "sys.mail_draft" {
+                    let editable = source
+                        .args
+                        .iter()
+                        .find(|(name, _)| name == "fields")
+                        .is_some_and(|(_, arg)| {
+                            matches!(arg, SourceArg::List(fields) if fields.len() == 1
+                                && matches!(fields[0].as_str(), "to" | "subject" | "body"))
+                        });
+                    if !editable {
+                        sink.push(
+                            transition.line,
+                            transition.column,
+                            "a written sys.mail_draft source must declare exactly one editable \
+                             field: to, subject or body (profile §5.16)"
+                                .to_string(),
+                        );
+                    }
                 }
                 // A written PREFERENCE must say which one, and the declaration
                 // is what says it: the write's key is the source's single
@@ -4891,6 +4941,9 @@ fn validate_sources(card: &Card, sink: &mut Diagnostics) {
                 ("id", "digest id", "which of the app's digests"),
                 sink,
             ),
+            "sys.mail_draft" | "sys.mail_review" => {
+                check_app_scoped_source(source, ("id", "draft id", "which host-issued draft"), sink)
+            }
             "sys.chat" => check_app_scoped_source(
                 source,
                 ("thread", "thread id", "which of the app's conversations"),
@@ -8266,7 +8319,7 @@ pub mod makepad {
             // publishing app, and only the host knows who that is; a backend
             // call could not check `app` against the caller, so there is none
             // and the value is the one the host injected.
-            "sys.digest" => None,
+            "sys.digest" | "sys.mail_draft" | "sys.mail_review" => None,
             // The same for a conversation: the host holds it for the publishing
             // app, runs the agent, and appends both sides (§5.15).
             "sys.chat" => None,
@@ -10166,7 +10219,7 @@ pub struct CollectionWrite {
     pub op: String,
     /// The payload the tapped element carried. Empty for `clear`.
     pub value: String,
-    /// For a KEYED capability (`sys.prefs`), the key the write lands under —
+    /// For a KEYED capability (`sys.prefs`, `sys.mail_draft`), the key the write lands under —
     /// the source's single declared field, which the checker guarantees exists.
     /// Empty for list capabilities, whose store is named by the helper alone.
     pub field: String,
