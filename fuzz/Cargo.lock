@@ -450,6 +450,7 @@ dependencies = [
  "octoscript-sandbox",
  "octoscript-schema",
  "octoscript-storage",
+ "octoscript-ui-l0",
  "octoscript-worker",
  "octoscript-workflow",
  "serde_json",

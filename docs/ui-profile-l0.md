@@ -667,6 +667,40 @@ by the typed text encoded at runtime as one JSON string (`sys.json_string(t)`), 
 a live tap payload already used. `kit::lower` still passes the `$$` form to `l0_field`, whose
 consumers rebuild the target from its routing keys the same way and never splice.
 
+### 4.3 Layered catalog — host-registered `sys.*` helpers
+
+The build-time [`catalog::ANSWERS`] table is closed (32 entries). Apps that own their own data plane (HTTP fetches, schemas, capability list) may expose additional helpers at runtime via [`catalog::register`]. The build-time catalog stays canonical; registered helpers are consulted only when the build-time one does not admit the name.
+
+Rules:
+
+- The contract's `name` MUST start with `sys.` and MUST NOT collide with any of the 32 build-time entries (`ANSWERS`, `AGGREGATES`, or `MUTABLE`).
+- A duplicate registration of the same name is refused.
+- `register` returns `Result<&'static SysContract, String>` so a host can fail loudly at boot rather than silently shadow a fixture.
+- `registered_names()` lists every runtime helper (for `check_card` diagnostics and tooling).
+- `validate_sources` (profile §4.3 checker) accepts a registered helper the same way it accepts a build-time one; the error message lists both sets when a card names an unknown one.
+
+What is deliberately NOT changed:
+
+- `catalog::ANSWERS` stays 32 entries. New apps must opt in.
+- `catalog::MUTABLE` (the writable sources table) is NOT extended by runtime registration; writes still go through the build-time list. This is the safe default — a card asking to mutate a runtime helper would be a much larger surface to audit.
+- `catalog::AGGREGATES` is NOT extended; the no-facts rule remains unchanged.
+
+Example (finance-brief-style 17-capability registration):
+
+```rust
+use octoscript_ui_l0::catalog::{register, SysContract};
+
+register(SysContract {
+    name: "sys.news_sina".into(),
+    fields: &["id", "title", "source", "ts", "summary"],
+    schema: None,
+})?;
+```
+
+A card `source n sys.news_sina(fields: [title, source, ts])` then checks and realizes the same way it would for a build-time helper.
+
+See `examples/register_layered.rs` for a full 17-capability registration, `tests/catalog_register.rs` for the unit-test coverage, and `fuzz/fuzz_targets/catalog_register.rs` for the fuzz harness.
+
 ---
 
 ## 5. Components and instance identity
