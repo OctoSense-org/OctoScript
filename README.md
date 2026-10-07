@@ -1,5 +1,7 @@
 # Octoscript
 
+<img src="docs/assets/octoscript-logo.svg" alt="OctoScript" width="96" height="96" />
+
 English | [简体中文](README.zh-CN.md)
 
 > **Building an OctoSense app?** You do not need this repository: it is the standalone OctoScript language runtime (VM, capabilities, workflows, LSP). An app's `main.splash` runs on the Makepad-based runtime that the app tools set up for you, and the language an app may use is documented in [SCRIPT-API](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/docs/SCRIPT-API.md). Start from the [OctoSense organization profile](https://github.com/OctoSense-org)'s reading order: [OctoScript-App-Design-Flow `AGENTS.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/AGENTS.md) → [`flows/README.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/flows/README.md) → [`docs/QUICKSTART.md`](https://github.com/OctoSense-org/OctoScript-App-Design-Flow/blob/main/docs/QUICKSTART.md).
